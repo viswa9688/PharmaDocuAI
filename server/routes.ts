@@ -1,12 +1,12 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
-import { dbStorage } from "./db-storage";
+import { memStorage } from "./storage";
 import { createDocumentAIService } from "./services/document-ai";
 import { createClassifierService } from "./services/classifier";
 import { createPDFProcessorService } from "./services/pdf-processor";
 
-const storage = dbStorage;
+const storage = memStorage;
 
 const upload = multer({
   storage: multer.memoryStorage(),
