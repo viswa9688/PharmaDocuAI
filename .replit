@@ -18,6 +18,14 @@ externalPort = 80
 localPort = 37213
 externalPort = 3001
 
+[[ports]]
+localPort = 39819
+externalPort = 3002
+
+[[ports]]
+localPort = 40871
+externalPort = 3000
+
 [env]
 PORT = "5000"
 
@@ -41,3 +49,10 @@ author = "agent"
 task = "shell.exec"
 args = "npm run dev"
 waitForPort = 5000
+
+[userenv]
+
+[userenv.shared]
+GOOGLE_CLOUD_PROJECT_ID = "pharmacydocuscanner"
+GOOGLE_CLOUD_LOCATION = "us"
+GOOGLE_DOCUMENT_AI_PROCESSOR_ID = "870b7b61f99f718f"
