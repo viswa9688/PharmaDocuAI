@@ -233,7 +233,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                                 errorMessage.includes("PERMISSION_DENIED") || 
                                 errorMessage.includes("billing") ||
                                 errorMessage.includes("BILLING_DISABLED") ||
-                                errorDetails.some((d: any) => d.reason === "BILLING_DISABLED");
+                                (Array.isArray(errorDetails) && errorDetails.some((d: any) => d.reason === "BILLING_DISABLED"));
           
           console.warn("Document AI error, falling back to mock processing:", { errorCode, errorMessage });
           usedFallback = true;
