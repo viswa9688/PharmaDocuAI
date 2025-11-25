@@ -6,6 +6,7 @@ import { memStorage } from "./storage";
 import { createDocumentAIService } from "./services/document-ai";
 import { createClassifierService } from "./services/classifier";
 import { createPDFProcessorService } from "./services/pdf-processor";
+import { LayoutAnalyzer } from "./services/layout-analyzer";
 
 const storage = memStorage;
 
@@ -20,6 +21,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const documentAI = createDocumentAIService();
   const classifier = createClassifierService();
   const pdfProcessor = createPDFProcessorService();
+  const layoutAnalyzer = new LayoutAnalyzer();
 
   // Upload and process document
   app.post("/api/documents/upload", upload.single("file"), async (req, res) => {
@@ -273,7 +275,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 // Classify page
                 const classification = await classifier.classifyPage(extractedText, actualPageNumber);
 
-                // Store page with all rich extraction data
+                // Perform layout analysis to structure the extracted data
+                let layoutAnalysis = null;
+                if (pageData) {
+                  layoutAnalysis = layoutAnalyzer.analyze({
+                    tables: pageData.tables,
+                    formFields: pageData.formFields,
+                    checkboxes: pageData.checkboxes,
+                    handwrittenRegions: pageData.handwrittenRegions,
+                    signatures: pageData.signatures,
+                    textBlocks: pageData.textBlocks,
+                    pageDimensions: pageData.pageDimensions,
+                  });
+                }
+
+                // Store page with all rich extraction data and layout analysis
                 await storage.createPage({
                   documentId,
                   pageNumber: actualPageNumber,
@@ -295,7 +311,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                       signatures: pageData.signatures,
                       textBlocks: pageData.textBlocks,
                       pageDimensions: pageData.pageDimensions,
-                    } : null
+                    } : null,
+                    // Store structured layout analysis
+                    layout: layoutAnalysis,
                   } as Record<string, any>,
                 });
 
@@ -324,7 +342,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
               // Classify page
               const classification = await classifier.classifyPage(extractedText, pageNumber);
 
-              // Store page with all rich extraction data
+              // Perform layout analysis to structure the extracted data
+              let layoutAnalysis = null;
+              if (pageData) {
+                layoutAnalysis = layoutAnalyzer.analyze({
+                  tables: pageData.tables,
+                  formFields: pageData.formFields,
+                  checkboxes: pageData.checkboxes,
+                  handwrittenRegions: pageData.handwrittenRegions,
+                  signatures: pageData.signatures,
+                  textBlocks: pageData.textBlocks,
+                  pageDimensions: pageData.pageDimensions,
+                });
+              }
+
+              // Store page with all rich extraction data and layout analysis
               await storage.createPage({
                 documentId,
                 pageNumber,
@@ -344,7 +376,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     signatures: pageData.signatures,
                     textBlocks: pageData.textBlocks,
                     pageDimensions: pageData.pageDimensions,
-                  } : null
+                  } : null,
+                  // Store structured layout analysis
+                  layout: layoutAnalysis,
                 } as Record<string, any>,
               });
 
