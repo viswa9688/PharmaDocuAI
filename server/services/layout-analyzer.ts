@@ -19,10 +19,10 @@ export type SectionType =
   | 'materials_log'
   | 'equipment_log'
   | 'cip_sip_record'
-  | 'filtration_record'
-  | 'filling_operation'
+  | 'filtration_step'
+  | 'filling_log'
   | 'inspection_sheet'
-  | 'reconciliation'
+  | 'reconciliation_page'
   | 'attachment'
   | 'header'
   | 'footer'
@@ -95,13 +95,13 @@ export class LayoutAnalyzer {
       /sterilization\s+in\s+place/i,
       /sanitization/i,
     ],
-    filtration_record: [
+    filtration_step: [
       /filtration\s+(step|record|log)/i,
       /filter\s+(integrity|test)/i,
       /membrane\s+filter/i,
       /sterile\s+filter/i,
     ],
-    filling_operation: [
+    filling_log: [
       /filling\s+(operation|record|log)/i,
       /vial\s+filling/i,
       /container\s+filling/i,
@@ -113,7 +113,7 @@ export class LayoutAnalyzer {
       /visual\s+inspection/i,
       /quality\s+check/i,
     ],
-    reconciliation: [
+    reconciliation_page: [
       /reconciliation/i,
       /material\s+balance/i,
       /yield\s+calculation/i,
