@@ -192,35 +192,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Process with Document AI if available
       if (documentAI) {
         try {
-          const document = await documentAI.processDocument(pdfBuffer);
-          const totalPages = documentAI.getTotalPages(document);
+          // Split into batches if document is large (>30 pages)
+          const MAX_PAGES_PER_BATCH = 30;
+          
+          if (pageCount > MAX_PAGES_PER_BATCH) {
+            console.log(`Large document detected (${pageCount} pages). Splitting into batches of ${MAX_PAGES_PER_BATCH} pages...`);
+            const batches = await pdfProcessor.splitIntoBatches(pdfBuffer, MAX_PAGES_PER_BATCH);
+            console.log(`Created ${batches.length} batches for processing`);
 
-          for (let i = 0; i < totalPages; i++) {
-            const pageNumber = i + 1;
-            const extractedText = documentAI.extractPageText(document, i);
+            // Process each batch
+            for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+              const batch = batches[batchIndex];
+              console.log(`Processing batch ${batchIndex + 1}/${batches.length}: pages ${batch.startPage}-${batch.endPage}`);
 
-            // Classify page
-            const classification = await classifier.classifyPage(extractedText, pageNumber);
+              const batchDocument = await documentAI.processDocument(batch.buffer);
+              const batchPages = documentAI.getTotalPages(batchDocument);
 
-            // Store page
-            await storage.createPage({
-              documentId,
-              pageNumber,
-              classification: classification.classification,
-              confidence: classification.confidence,
-              extractedText,
-              issues: [],
-              metadata: { reasoning: classification.reasoning },
-            });
+              for (let i = 0; i < batchPages; i++) {
+                const actualPageNumber = batch.startPage + i;
+                const extractedText = documentAI.extractPageText(batchDocument, i);
 
-            processedPages.push({
-              pageNumber,
-              text: extractedText,
-              classification: classification.classification,
-            });
+                // Classify page
+                const classification = await classifier.classifyPage(extractedText, actualPageNumber);
 
-            pagesAlreadyProcessed++;
-            await storage.updateDocument(documentId, { processedPages: pageNumber });
+                // Store page
+                await storage.createPage({
+                  documentId,
+                  pageNumber: actualPageNumber,
+                  classification: classification.classification,
+                  confidence: classification.confidence,
+                  extractedText,
+                  issues: [],
+                  metadata: { 
+                    reasoning: classification.reasoning,
+                    batch: batchIndex + 1,
+                    totalBatches: batches.length 
+                  },
+                });
+
+                processedPages.push({
+                  pageNumber: actualPageNumber,
+                  text: extractedText,
+                  classification: classification.classification,
+                });
+
+                pagesAlreadyProcessed++;
+                await storage.updateDocument(documentId, { processedPages: actualPageNumber });
+              }
+            }
+          } else {
+            // Process as single document
+            const document = await documentAI.processDocument(pdfBuffer);
+            const totalPages = documentAI.getTotalPages(document);
+
+            for (let i = 0; i < totalPages; i++) {
+              const pageNumber = i + 1;
+              const extractedText = documentAI.extractPageText(document, i);
+
+              // Classify page
+              const classification = await classifier.classifyPage(extractedText, pageNumber);
+
+              // Store page
+              await storage.createPage({
+                documentId,
+                pageNumber,
+                classification: classification.classification,
+                confidence: classification.confidence,
+                extractedText,
+                issues: [],
+                metadata: { reasoning: classification.reasoning },
+              });
+
+              processedPages.push({
+                pageNumber,
+                text: extractedText,
+                classification: classification.classification,
+              });
+
+              pagesAlreadyProcessed++;
+              await storage.updateDocument(documentId, { processedPages: pageNumber });
+            }
           }
         } catch (docAIError: any) {
           // Detect billing/permission errors using gRPC status codes
