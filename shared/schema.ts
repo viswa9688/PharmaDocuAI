@@ -37,6 +37,7 @@ export const pages = pgTable("pages", {
   classification: text("classification").notNull(),
   confidence: integer("confidence").notNull(), // 0-100
   extractedText: text("extracted_text"),
+  imagePath: text("image_path"), // Path to extracted page image
   issues: jsonb("issues").$type<string[]>().default([]),
   metadata: jsonb("metadata").$type<Record<string, any>>().default({}),
   createdAt: timestamp("created_at").defaultNow().notNull(),

@@ -1,4 +1,7 @@
 import { PDFDocument } from "pdf-lib";
+import { pdf } from "pdf-to-img";
+import { promises as fs } from "fs";
+import path from "path";
 
 export interface PDFBatch {
   buffer: Buffer;
@@ -54,6 +57,32 @@ export class PDFProcessorService {
   async getPageCount(pdfBuffer: Buffer): Promise<number> {
     const pdfDoc = await PDFDocument.load(pdfBuffer);
     return pdfDoc.getPageCount();
+  }
+
+  async extractPageImages(pdfBuffer: Buffer, documentId: string): Promise<string[]> {
+    const imagesDir = path.join(process.cwd(), "uploads", "page-images", documentId);
+    await fs.mkdir(imagesDir, { recursive: true });
+
+    const imagePaths: string[] = [];
+    
+    try {
+      const document = await pdf(pdfBuffer, { scale: 2 });
+      
+      let pageNumber = 1;
+      for await (const image of document) {
+        const imagePath = path.join(imagesDir, `page-${pageNumber}.png`);
+        await fs.writeFile(imagePath, image);
+        
+        // Store relative path for database
+        imagePaths.push(`page-images/${documentId}/page-${pageNumber}.png`);
+        pageNumber++;
+      }
+    } catch (error) {
+      console.error("Error extracting page images:", error);
+      throw new Error(`Failed to extract page images: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+
+    return imagePaths;
   }
 }
 
