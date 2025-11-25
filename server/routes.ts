@@ -192,8 +192,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Process with Document AI if available
       if (documentAI) {
         try {
-          // Split into batches if document is large (>30 pages)
-          const MAX_PAGES_PER_BATCH = 30;
+          // Split into batches if document is large (>15 pages)
+          // Form Parser sync API limit is 15 pages per request
+          const MAX_PAGES_PER_BATCH = 15;
           
           if (pageCount > MAX_PAGES_PER_BATCH) {
             console.log(`Large document detected (${pageCount} pages). Splitting into batches of ${MAX_PAGES_PER_BATCH} pages...`);
