@@ -13,7 +13,7 @@ import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Page } from "@shared/schema";
 import { useParams } from "wouter";
-import { CheckSquare, Square, FileText, PenLine, FileSignature, LayoutGrid } from "lucide-react";
+import { CheckSquare, Square, FileText, PenLine, FileSignature, LayoutGrid, CheckCircle2, XCircle, AlertCircle, ArrowRight } from "lucide-react";
 
 interface PageDetailPanelProps {
   page: Page | null;
@@ -45,6 +45,13 @@ export function PageDetailPanel({ page, open, onOpenChange }: PageDetailPanelPro
   // Extract layout analysis from metadata
   const layout = page.metadata?.layout || null;
   const hasSections = layout && layout.sections && layout.sections.length > 0;
+
+  // Extract approval analysis from metadata
+  const approvals = page.metadata?.approvals || null;
+  const hasApprovals = approvals && (
+    approvals.signatures?.length > 0 ||
+    approvals.checkpoints?.length > 0
+  );
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -423,6 +430,190 @@ export function PageDetailPanel({ page, open, onOpenChange }: PageDetailPanelPro
                       </div>
                     </Card>
                   ))}
+                </div>
+              </>
+            )}
+
+            {/* Signature and Approval Tracking */}
+            {hasApprovals && (
+              <>
+                <Separator />
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-sm font-medium flex items-center gap-2 mb-2">
+                      <FileSignature className="h-4 w-4" />
+                      Signatures & Approvals
+                    </h3>
+                    <div className="text-xs text-muted-foreground">
+                      {approvals.signatures?.length || 0} signature{(approvals.signatures?.length || 0) !== 1 ? 's' : ''} detected
+                      {approvals.missingSignatures && approvals.missingSignatures.length > 0 && (
+                        <span className="text-destructive ml-2">
+                          • {approvals.missingSignatures.length} missing
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Approval Status Summary */}
+                  {approvals.checkpoints && approvals.checkpoints.length > 0 && (
+                    <Card className="p-4">
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium">Approval Status</span>
+                          <div className="flex items-center gap-2">
+                            {approvals.sequenceValid ? (
+                              <Badge variant="default" className="text-xs flex items-center gap-1" data-testid="badge-sequence-valid">
+                                <CheckCircle2 className="h-3 w-3" />
+                                Valid Sequence
+                              </Badge>
+                            ) : (
+                              <Badge variant="destructive" className="text-xs flex items-center gap-1" data-testid="badge-sequence-invalid">
+                                <XCircle className="h-3 w-3" />
+                                Invalid Sequence
+                              </Badge>
+                            )}
+                            {!approvals.allDatesPresent && (
+                              <Badge variant="outline" className="text-xs flex items-center gap-1" data-testid="badge-missing-dates">
+                                <AlertCircle className="h-3 w-3" />
+                                Missing Dates
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Approval Chain Timeline */}
+                        <div className="space-y-2">
+                          <h4 className="text-xs font-medium text-muted-foreground">Approval Flow</h4>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {approvals.approvalChain && approvals.approvalChain.map((role: string, idx: number) => (
+                              <div key={idx} className="flex items-center gap-2" data-testid={`approval-chain-step-${idx}`}>
+                                {idx > 0 && <ArrowRight className="h-3 w-3 text-muted-foreground" />}
+                                <Badge variant="secondary" className="text-xs capitalize" data-testid={`badge-role-${role}`}>
+                                  {role.replace(/_/g, ' ')}
+                                </Badge>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </Card>
+                  )}
+
+                  {/* Individual Signatures */}
+                  {approvals.signatures && approvals.signatures.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-medium text-muted-foreground">
+                        Detected Signatures ({approvals.signatures.length})
+                      </h4>
+                      <div className="space-y-2">
+                        {approvals.signatures.map((signature: any, idx: number) => (
+                          <Card key={idx} className="p-3" data-testid={`signature-${idx}`}>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1 space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <Badge variant="outline" className="text-xs capitalize">
+                                    {signature.role.replace(/_/g, ' ')}
+                                  </Badge>
+                                  <span className="text-xs text-muted-foreground">
+                                    {signature.signatureType}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {Math.round(signature.confidence)}% confidence
+                                  </span>
+                                </div>
+                                <div className="text-sm">{signature.fieldLabel}</div>
+                                {signature.associatedDate && (
+                                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                    <CheckCircle2 className="h-3 w-3 text-green-600" />
+                                    Date: {signature.associatedDate}
+                                  </div>
+                                )}
+                                {!signature.hasDate && (
+                                  <div className="flex items-center gap-1 text-xs text-destructive">
+                                    <XCircle className="h-3 w-3" />
+                                    No date found
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </Card>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Approval Checkpoints */}
+                  {approvals.checkpoints && approvals.checkpoints.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-medium text-muted-foreground">
+                        Approval Checkpoints ({approvals.checkpoints.length})
+                      </h4>
+                      <div className="space-y-2">
+                        {approvals.checkpoints.map((checkpoint: any, idx: number) => (
+                          <Card key={idx} className="p-3" data-testid={`checkpoint-${idx}`}>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1 space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <Badge variant="outline" className="text-xs capitalize">
+                                    {checkpoint.role.replace(/_/g, ' ')}
+                                  </Badge>
+                                  {checkpoint.isComplete ? (
+                                    <Badge variant="default" className="text-xs flex items-center gap-1">
+                                      <CheckCircle2 className="h-3 w-3" />
+                                      Complete
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="destructive" className="text-xs flex items-center gap-1">
+                                      <XCircle className="h-3 w-3" />
+                                      Incomplete
+                                    </Badge>
+                                  )}
+                                </div>
+                                <div className="text-sm">{checkpoint.associatedText}</div>
+                                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                                  {checkpoint.signature && (
+                                    <span className="flex items-center gap-1">
+                                      <FileSignature className="h-3 w-3" />
+                                      Signature present
+                                    </span>
+                                  )}
+                                  {checkpoint.checkbox && (
+                                    <span className="flex items-center gap-1">
+                                      {checkpoint.checkbox.state === 'checked' ? (
+                                        <CheckSquare className="h-3 w-3 text-green-600" />
+                                      ) : (
+                                        <Square className="h-3 w-3" />
+                                      )}
+                                      Checkbox {checkpoint.checkbox.state}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </Card>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Missing Signatures Warning */}
+                  {approvals.missingSignatures && approvals.missingSignatures.length > 0 && (
+                    <Card className="p-4 border-destructive bg-destructive/5">
+                      <div className="flex items-start gap-2">
+                        <AlertCircle className="h-4 w-4 text-destructive flex-shrink-0 mt-0.5" />
+                        <div className="flex-1">
+                          <h4 className="text-sm font-medium text-destructive mb-1">Missing Required Signatures</h4>
+                          <div className="flex flex-wrap gap-2">
+                            {approvals.missingSignatures.map((role: string, idx: number) => (
+                              <Badge key={idx} variant="destructive" className="text-xs capitalize">
+                                {role.replace(/_/g, ' ')}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </Card>
+                  )}
                 </div>
               </>
             )}

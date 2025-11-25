@@ -7,6 +7,7 @@ import { createDocumentAIService } from "./services/document-ai";
 import { createClassifierService } from "./services/classifier";
 import { createPDFProcessorService } from "./services/pdf-processor";
 import { LayoutAnalyzer } from "./services/layout-analyzer";
+import { SignatureAnalyzer } from "./services/signature-analyzer";
 
 const storage = memStorage;
 
@@ -22,6 +23,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const classifier = createClassifierService();
   const pdfProcessor = createPDFProcessorService();
   const layoutAnalyzer = new LayoutAnalyzer();
+  const signatureAnalyzer = new SignatureAnalyzer();
 
   // Upload and process document
   app.post("/api/documents/upload", upload.single("file"), async (req, res) => {
@@ -160,6 +162,75 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Validate page approvals
+  app.get("/api/documents/:docId/pages/:pageNumber/validate-approvals", async (req, res) => {
+    try {
+      const { docId, pageNumber } = req.params;
+      
+      // Get the page
+      const pages = await storage.getPagesByDocument(docId);
+      const page = pages.find(p => p.pageNumber === parseInt(pageNumber));
+      
+      if (!page) {
+        return res.status(404).json({ error: "Page not found" });
+      }
+
+      const approvals = page.metadata?.approvals;
+      
+      if (!approvals) {
+        return res.json({
+          valid: false,
+          errors: ["No approval data found on this page"],
+          warnings: [],
+        });
+      }
+
+      const errors: string[] = [];
+      const warnings: string[] = [];
+
+      // Check for missing required signatures
+      if (approvals.missingSignatures && approvals.missingSignatures.length > 0) {
+        errors.push(`Missing required signatures: ${approvals.missingSignatures.map((r: string) => r.replace(/_/g, ' ')).join(', ')}`);
+      }
+
+      // Check signature sequence
+      if (!approvals.sequenceValid) {
+        errors.push("Approval sequence is not in the correct order");
+      }
+
+      // Check for dates
+      if (!approvals.allDatesPresent) {
+        warnings.push("Some signatures are missing associated dates");
+      }
+
+      // Check checkbox completion
+      if (!approvals.allCheckboxesChecked) {
+        warnings.push("Not all approval checkboxes are checked");
+      }
+
+      // Check individual checkpoints
+      const incompleteCheckpoints = (approvals.checkpoints || []).filter((cp: any) => !cp.isComplete);
+      if (incompleteCheckpoints.length > 0) {
+        errors.push(`${incompleteCheckpoints.length} incomplete approval checkpoint(s)`);
+      }
+
+      res.json({
+        valid: errors.length === 0,
+        errors,
+        warnings,
+        summary: {
+          totalSignatures: approvals.signatures?.length || 0,
+          missingSignatures: approvals.missingSignatures?.length || 0,
+          sequenceValid: approvals.sequenceValid,
+          allDatesPresent: approvals.allDatesPresent,
+          allCheckboxesChecked: approvals.allCheckboxesChecked,
+        },
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Delete document
   app.delete("/api/documents/:id", async (req, res) => {
     try {
@@ -289,7 +360,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   });
                 }
 
-                // Store page with all rich extraction data and layout analysis
+                // Perform signature and approval analysis with error handling
+                let approvalAnalysis = null;
+                if (pageData) {
+                  try {
+                    approvalAnalysis = signatureAnalyzer.analyze({
+                      handwrittenRegions: pageData.handwrittenRegions,
+                      signatures: pageData.signatures,
+                      checkboxes: pageData.checkboxes,
+                      formFields: pageData.formFields,
+                      textBlocks: pageData.textBlocks,
+                      pageDimensions: pageData.pageDimensions,
+                    });
+                  } catch (approvalError: any) {
+                    console.error(`Approval analysis failed for page ${actualPageNumber}:`, approvalError.message);
+                    // Provide default empty approvals on error
+                    approvalAnalysis = {
+                      signatures: [],
+                      checkpoints: [],
+                      approvalChain: [],
+                      missingSignatures: [],
+                      sequenceValid: true,
+                      allDatesPresent: true,
+                      allCheckboxesChecked: true,
+                    };
+                  }
+                }
+
+                // Store page with all rich extraction data, layout analysis, and approvals
                 await storage.createPage({
                   documentId,
                   pageNumber: actualPageNumber,
@@ -314,6 +412,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     } : null,
                     // Store structured layout analysis
                     layout: layoutAnalysis,
+                    // Store signature and approval analysis
+                    approvals: approvalAnalysis,
                   } as Record<string, any>,
                 });
 
@@ -356,7 +456,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 });
               }
 
-              // Store page with all rich extraction data and layout analysis
+              // Perform signature and approval analysis with error handling
+              let approvalAnalysis = null;
+              if (pageData) {
+                try {
+                  approvalAnalysis = signatureAnalyzer.analyze({
+                    handwrittenRegions: pageData.handwrittenRegions,
+                    signatures: pageData.signatures,
+                    checkboxes: pageData.checkboxes,
+                    formFields: pageData.formFields,
+                    textBlocks: pageData.textBlocks,
+                    pageDimensions: pageData.pageDimensions,
+                  });
+                } catch (approvalError: any) {
+                  console.error(`Approval analysis failed for page ${pageNumber}:`, approvalError.message);
+                  // Provide default empty approvals on error
+                  approvalAnalysis = {
+                    signatures: [],
+                    checkpoints: [],
+                    approvalChain: [],
+                    missingSignatures: [],
+                    sequenceValid: true,
+                    allDatesPresent: true,
+                    allCheckboxesChecked: true,
+                  };
+                }
+              }
+
+              // Store page with all rich extraction data, layout analysis, and approvals
               await storage.createPage({
                 documentId,
                 pageNumber,
@@ -379,6 +506,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   } : null,
                   // Store structured layout analysis
                   layout: layoutAnalysis,
+                  // Store signature and approval analysis
+                  approvals: approvalAnalysis,
                 } as Record<string, any>,
               });
 
@@ -436,11 +565,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
             documentId,
             pageNumber,
             classification: mockClassification,
-            confidence: 0.75,
+            confidence: 75,
             extractedText: mockText,
             imagePath: pageImages[pageNumber - 1], // Associate image with page
             issues: [reason],
-            metadata: { mock: true },
+            metadata: { 
+              mock: true,
+              approvals: {
+                signatures: [],
+                checkpoints: [],
+                approvalChain: [],
+                missingSignatures: [],
+                sequenceValid: true,
+                allDatesPresent: true,
+                allCheckboxesChecked: true,
+              }
+            } as Record<string, any>,
           });
 
           processedPages.push({

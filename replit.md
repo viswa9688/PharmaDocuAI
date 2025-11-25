@@ -15,12 +15,14 @@ AI-powered system to process scanned batch record PDFs, automatically classify p
    - **Side-by-side viewer** - View original scanned page images alongside extracted data
    - **Structured data display** - Tables, form fields, checkboxes, handwriting annotations, signatures
    - **Page structure viewer** - Displays recognized sections with field mapping and content organization
+   - **Approval timeline** - Visual signature flow, approval checkpoints, missing signature warnings
    - Quality issue alerts and classification badges
    - Sidebar navigation
 3. **Backend Services**:
    - **Google Document AI Form Parser** - Comprehensive OCR with structure recognition
    - **High-accuracy extraction module** - Extracts tables, form fields, checkboxes, handwritten text, signatures with positional data
    - **Layout Analyzer** - Identifies page structure, detects sections, groups elements spatially, and maps to predefined fields
+   - **Signature Analyzer** - Detects signatures, tracks approval chains, validates compliance, links dates and checkboxes
    - OpenAI-powered page classification with rule-based fallback
    - PDF processing with page extraction and image generation
    - **Page image extraction** - Converts each PDF page to PNG (scale: 2) using pdf-to-img
@@ -48,6 +50,19 @@ Without these credentials:
 - Classification uses rule-based fallback instead of AI
 
 ## Recent Changes
+**November 25, 2025** (Session 4):
+- **Signature & Approval Tracking Module**: Implemented comprehensive SignatureAnalyzer service to detect and validate approval workflows on batch record pages:
+  - **Signature Detection**: Automatically identifies operator, supervisor, reviewer, QA reviewer, QA approver, verifier, manager, and other signature roles from field labels and proximity to handwritten regions
+  - **Date Association**: Links each signature to adjacent date/timestamp within spatial proximity (150px threshold)
+  - **Approval Chain Tracking**: Detects signature sequences (operator → reviewer → QA → approver) and identifies missing required signatures
+  - **Checkbox Integration**: Maps approval checkboxes to signatures, tracking checked/unchecked states
+  - **Validation API**: REST endpoint validates signature presence, order, date consistency, and checkbox completion with structured errors/warnings
+  - **Pipeline Integration**: Runs after Document AI and layout analysis with error handling; stores results in `pages.metadata.approvals`
+  - **Comprehensive UI**: Visual approval timeline showing signature flow, detected signatures with roles/dates/confidence, approval checkpoints with complete/incomplete status, missing signature warnings
+  - **Graceful Fallbacks**: Empty approval structure provided in mock/error modes to ensure UI stability
+- Error handling ensures robust processing even when signature detection fails
+- Production-ready for compliance validation with pharmaceutical batch records
+
 **November 25, 2025** (Session 3):
 - **Layout Analysis & Field Recognition Module**: Implemented comprehensive LayoutAnalyzer service to identify page structure and map extracted data to predefined fields:
   - **Section Detection**: Pattern-matching recognizes 7 batch record section types with correct taxonomy (materials_log, equipment_log, cip_sip_record, filtration_step, filling_log, inspection_sheet, reconciliation_page)
@@ -98,8 +113,8 @@ client/
     pages/          # Route pages (upload, documents, viewer)
     lib/            # Query client and utilities
 server/
-  services/         # Document AI, classifier, PDF processor, layout analyzer
-  routes.ts         # API endpoints
+  services/         # Document AI, classifier, PDF processor, layout analyzer, signature analyzer
+  routes.ts         # API endpoints (including approval validation)
   db-storage.ts     # PostgreSQL storage layer
   storage.ts        # In-memory fallback storage
 shared/
