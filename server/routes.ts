@@ -265,12 +265,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
               for (let i = 0; i < batchPages; i++) {
                 const actualPageNumber = batch.startPage + i;
-                const extractedText = documentAI.extractPageText(batchDocument, i);
+                
+                // Extract comprehensive page data
+                const pageData = documentAI.extractPageData(batchDocument, i);
+                const extractedText = pageData?.extractedText || "";
 
                 // Classify page
                 const classification = await classifier.classifyPage(extractedText, actualPageNumber);
 
-                // Store page
+                // Store page with all rich extraction data
                 await storage.createPage({
                   documentId,
                   pageNumber: actualPageNumber,
@@ -282,8 +285,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   metadata: { 
                     reasoning: classification.reasoning,
                     batch: batchIndex + 1,
-                    totalBatches: batches.length 
-                  },
+                    totalBatches: batches.length,
+                    // Store all rich extraction data
+                    extraction: pageData ? {
+                      tables: pageData.tables,
+                      formFields: pageData.formFields,
+                      checkboxes: pageData.checkboxes,
+                      handwrittenRegions: pageData.handwrittenRegions,
+                      signatures: pageData.signatures,
+                      textBlocks: pageData.textBlocks,
+                      pageDimensions: pageData.pageDimensions,
+                    } : null
+                  } as Record<string, any>,
                 });
 
                 processedPages.push({
@@ -303,12 +316,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
             for (let i = 0; i < totalPages; i++) {
               const pageNumber = i + 1;
-              const extractedText = documentAI.extractPageText(document, i);
+              
+              // Extract comprehensive page data
+              const pageData = documentAI.extractPageData(document, i);
+              const extractedText = pageData?.extractedText || "";
 
               // Classify page
               const classification = await classifier.classifyPage(extractedText, pageNumber);
 
-              // Store page
+              // Store page with all rich extraction data
               await storage.createPage({
                 documentId,
                 pageNumber,
@@ -317,7 +333,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 extractedText,
                 imagePath: pageImages[pageNumber - 1], // Associate image with page
                 issues: [],
-                metadata: { reasoning: classification.reasoning },
+                metadata: { 
+                  reasoning: classification.reasoning,
+                  // Store all rich extraction data
+                  extraction: pageData ? {
+                    tables: pageData.tables,
+                    formFields: pageData.formFields,
+                    checkboxes: pageData.checkboxes,
+                    handwrittenRegions: pageData.handwrittenRegions,
+                    signatures: pageData.signatures,
+                    textBlocks: pageData.textBlocks,
+                    pageDimensions: pageData.pageDimensions,
+                  } : null
+                } as Record<string, any>,
               });
 
               processedPages.push({

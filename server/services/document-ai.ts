@@ -24,6 +24,8 @@ export interface TableCell {
   confidence: number;
   boundingBox?: BoundingBox;
   isHeader?: boolean;
+  rowSpan?: number;
+  colSpan?: number;
 }
 
 export interface TableData {
@@ -206,19 +208,39 @@ export class DocumentAIService {
 
     for (const table of page.tables) {
       const cells: TableCell[] = [];
+      const occupancy: Map<string, boolean> = new Map(); // Track occupied cells (row,col)
       let maxRow = 0;
       let maxCol = 0;
+      let currentRowIndex = 0;
+
+      const markOccupied = (row: number, col: number, rowSpan: number, colSpan: number) => {
+        for (let r = row; r < row + rowSpan; r++) {
+          for (let c = col; c < col + colSpan; c++) {
+            occupancy.set(`${r},${c}`, true);
+          }
+        }
+      };
+
+      const findNextFreeColumn = (row: number, startCol: number = 0): number => {
+        let col = startCol;
+        while (occupancy.has(`${row},${col}`)) {
+          col++;
+        }
+        return col;
+      };
 
       // Extract header rows
       if (table.headerRows) {
         for (const headerRow of table.headerRows) {
           if (headerRow.cells) {
+            let lastColIndex = -1; // Track last column used in this row
             for (const cell of headerRow.cells) {
-              const rowIndex = Number(cell.rowSpan || 1) - 1;
-              const colIndex = Number(cell.colSpan || 1) - 1;
+              const colIndex = findNextFreeColumn(currentRowIndex, lastColIndex + 1);
+              const rowSpan = Number(cell.rowSpan || 1);
+              const colSpan = Number(cell.colSpan || 1);
               
               cells.push({
-                rowIndex,
+                rowIndex: currentRowIndex,
                 colIndex,
                 text: this.getTextFromAnchor(cell.layout?.textAnchor, fullText).trim(),
                 confidence: Number(cell.layout?.confidence || 0) * 100,
@@ -228,11 +250,16 @@ export class DocumentAIService {
                   pageHeight
                 ),
                 isHeader: true,
+                rowSpan,
+                colSpan,
               });
 
-              maxRow = Math.max(maxRow, rowIndex);
-              maxCol = Math.max(maxCol, colIndex);
+              markOccupied(currentRowIndex, colIndex, rowSpan, colSpan);
+              maxRow = Math.max(maxRow, currentRowIndex + rowSpan - 1);
+              maxCol = Math.max(maxCol, colIndex + colSpan - 1);
+              lastColIndex = colIndex + colSpan - 1; // Update last column including span
             }
+            currentRowIndex++;
           }
         }
       }
@@ -241,12 +268,14 @@ export class DocumentAIService {
       if (table.bodyRows) {
         for (const bodyRow of table.bodyRows) {
           if (bodyRow.cells) {
+            let lastColIndex = -1; // Track last column used in this row
             for (const cell of bodyRow.cells) {
-              const rowIndex = Number(cell.rowSpan || 1) - 1;
-              const colIndex = Number(cell.colSpan || 1) - 1;
+              const colIndex = findNextFreeColumn(currentRowIndex, lastColIndex + 1);
+              const rowSpan = Number(cell.rowSpan || 1);
+              const colSpan = Number(cell.colSpan || 1);
               
               cells.push({
-                rowIndex,
+                rowIndex: currentRowIndex,
                 colIndex,
                 text: this.getTextFromAnchor(cell.layout?.textAnchor, fullText).trim(),
                 confidence: Number(cell.layout?.confidence || 0) * 100,
@@ -256,11 +285,16 @@ export class DocumentAIService {
                   pageHeight
                 ),
                 isHeader: false,
+                rowSpan,
+                colSpan,
               });
 
-              maxRow = Math.max(maxRow, rowIndex);
-              maxCol = Math.max(maxCol, colIndex);
+              markOccupied(currentRowIndex, colIndex, rowSpan, colSpan);
+              maxRow = Math.max(maxRow, currentRowIndex + rowSpan - 1);
+              maxCol = Math.max(maxCol, colIndex + colSpan - 1);
+              lastColIndex = colIndex + colSpan - 1; // Update last column including span
             }
+            currentRowIndex++;
           }
         }
       }

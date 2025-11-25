@@ -10,8 +10,10 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Card } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Page } from "@shared/schema";
 import { useParams } from "wouter";
+import { CheckSquare, Square, FileText, PenLine, FileSignature } from "lucide-react";
 
 interface PageDetailPanelProps {
   page: Page | null;
@@ -29,6 +31,16 @@ export function PageDetailPanel({ page, open, onOpenChange }: PageDetailPanelPro
   const imageUrl = page.imagePath 
     ? `/api/documents/${documentId}/pages/${page.pageNumber}/image`
     : null;
+
+  // Extract rich data from metadata
+  const extraction = page.metadata?.extraction || null;
+  const hasRichData = extraction && (
+    extraction.tables?.length > 0 ||
+    extraction.formFields?.length > 0 ||
+    extraction.checkboxes?.length > 0 ||
+    extraction.handwrittenRegions?.length > 0 ||
+    extraction.signatures?.length > 0
+  );
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -120,11 +132,193 @@ export function PageDetailPanel({ page, open, onOpenChange }: PageDetailPanelPro
               </>
             )}
 
+            {/* Rich Extraction Data */}
+            {hasRichData && (
+              <>
+                <Separator />
+                <div className="space-y-4">
+                  <h3 className="text-sm font-medium flex items-center gap-2">
+                    <FileText className="h-4 w-4" />
+                    Structured Data Extraction
+                  </h3>
+
+                  {/* Tables */}
+                  {extraction.tables && extraction.tables.length > 0 && (
+                    <div className="space-y-3">
+                      <h4 className="text-xs font-medium text-muted-foreground">
+                        Tables ({extraction.tables.length})
+                      </h4>
+                      {extraction.tables.map((table: any, tableIdx: number) => {
+                        // Group cells by row
+                        const rows: any[][] = [];
+                        for (const cell of table.cells) {
+                          if (!rows[cell.rowIndex]) rows[cell.rowIndex] = [];
+                          rows[cell.rowIndex][cell.colIndex] = cell;
+                        }
+
+                        return (
+                          <Card key={tableIdx} className="p-3">
+                            <div className="text-xs text-muted-foreground mb-2">
+                              Table {tableIdx + 1} - {table.rowCount} rows × {table.columnCount} columns 
+                              {table.confidence && ` (${Math.round(table.confidence)}% confidence)`}
+                            </div>
+                            <div className="overflow-x-auto">
+                              <Table>
+                                {rows.some((row: any[]) => row.some((cell: any) => cell?.isHeader)) && (
+                                  <TableHeader>
+                                    <TableRow>
+                                      {rows[0]?.map((cell: any, colIdx: number) => (
+                                        cell ? (
+                                          <TableHead 
+                                            key={colIdx} 
+                                            className="text-xs"
+                                            colSpan={cell.colSpan || 1}
+                                            rowSpan={cell.rowSpan || 1}
+                                          >
+                                            {cell.text}
+                                          </TableHead>
+                                        ) : (
+                                          <TableHead key={colIdx} className="text-xs" />
+                                        )
+                                      ))}
+                                    </TableRow>
+                                  </TableHeader>
+                                )}
+                                <TableBody>
+                                  {rows.slice(rows.some((row: any[]) => row.some((cell: any) => cell?.isHeader)) ? 1 : 0).map((row: any[], rowIdx: number) => (
+                                    <TableRow key={rowIdx}>
+                                      {row.map((cell: any, colIdx: number) => (
+                                        cell ? (
+                                          <TableCell 
+                                            key={colIdx} 
+                                            className="text-xs"
+                                            colSpan={cell.colSpan || 1}
+                                            rowSpan={cell.rowSpan || 1}
+                                          >
+                                            {cell.text}
+                                          </TableCell>
+                                        ) : (
+                                          <TableCell key={colIdx} className="text-xs" />
+                                        )
+                                      ))}
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </div>
+                          </Card>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Form Fields */}
+                  {extraction.formFields && extraction.formFields.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-medium text-muted-foreground">
+                        Form Fields ({extraction.formFields.length})
+                      </h4>
+                      <div className="space-y-2">
+                        {extraction.formFields.map((field: any, idx: number) => (
+                          <div key={idx} className="flex items-start gap-2 p-2 bg-muted rounded-md" data-testid={`form-field-${idx}`}>
+                            <div className="flex-1 space-y-1">
+                              <div className="text-xs font-medium text-muted-foreground">{field.fieldName}</div>
+                              <div className="text-sm font-mono">{field.fieldValue}</div>
+                              {field.confidence && (
+                                <div className="text-xs text-muted-foreground">
+                                  {Math.round(field.confidence)}% confidence
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Checkboxes */}
+                  {extraction.checkboxes && extraction.checkboxes.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-medium text-muted-foreground">
+                        Checkboxes ({extraction.checkboxes.length})
+                      </h4>
+                      <div className="space-y-2">
+                        {extraction.checkboxes.map((checkbox: any, idx: number) => (
+                          <div key={idx} className="flex items-center gap-2 p-2 bg-muted rounded-md" data-testid={`checkbox-${idx}`}>
+                            {checkbox.state === 'checked' ? (
+                              <CheckSquare className="h-4 w-4 text-primary" />
+                            ) : (
+                              <Square className="h-4 w-4 text-muted-foreground" />
+                            )}
+                            <div className="flex-1">
+                              <div className="text-sm">{checkbox.associatedText || 'Unlabeled checkbox'}</div>
+                              {checkbox.confidence && (
+                                <div className="text-xs text-muted-foreground">
+                                  {Math.round(checkbox.confidence)}% confidence
+                                </div>
+                              )}
+                            </div>
+                            <Badge variant={checkbox.state === 'checked' ? 'default' : 'secondary'}>
+                              {checkbox.state}
+                            </Badge>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Handwritten Regions */}
+                  {extraction.handwrittenRegions && extraction.handwrittenRegions.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                        <PenLine className="h-3 w-3" />
+                        Handwritten Text ({extraction.handwrittenRegions.length})
+                      </h4>
+                      <div className="space-y-2">
+                        {extraction.handwrittenRegions.map((region: any, idx: number) => (
+                          <div key={idx} className="p-2 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900 rounded-md" data-testid={`handwritten-${idx}`}>
+                            <div className="text-sm font-mono italic">{region.text}</div>
+                            {region.confidence && (
+                              <div className="text-xs text-muted-foreground mt-1">
+                                {Math.round(region.confidence)}% confidence
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Signatures */}
+                  {extraction.signatures && extraction.signatures.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                        <FileSignature className="h-3 w-3" />
+                        Signature Blocks ({extraction.signatures.length})
+                      </h4>
+                      <div className="space-y-2">
+                        {extraction.signatures.map((signature: any, idx: number) => (
+                          <div key={idx} className="p-2 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900 rounded-md" data-testid={`signature-${idx}`}>
+                            <div className="text-sm">{signature.associatedLabel || 'Signature detected'}</div>
+                            {signature.confidence && (
+                              <div className="text-xs text-muted-foreground mt-1">
+                                {Math.round(signature.confidence)}% confidence
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
             {page.extractedText && (
               <>
                 <Separator />
                 <div>
-                  <h3 className="text-sm font-medium mb-2">Extracted Text</h3>
+                  <h3 className="text-sm font-medium mb-2">Raw Extracted Text</h3>
                   <div className="bg-muted p-4 rounded-md">
                     <pre className="text-xs whitespace-pre-wrap font-mono" data-testid="text-extracted">
                       {page.extractedText}
