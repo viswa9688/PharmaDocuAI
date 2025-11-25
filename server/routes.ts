@@ -2,14 +2,15 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import path from "path";
-import { memStorage } from "./storage";
+import { DBStorage } from "./db-storage";
 import { createDocumentAIService } from "./services/document-ai";
 import { createClassifierService } from "./services/classifier";
 import { createPDFProcessorService } from "./services/pdf-processor";
 import { LayoutAnalyzer } from "./services/layout-analyzer";
 import { SignatureAnalyzer } from "./services/signature-analyzer";
 
-const storage = memStorage;
+// Use PostgreSQL database storage for persistence
+const storage = new DBStorage();
 
 const upload = multer({
   storage: multer.memoryStorage(),
