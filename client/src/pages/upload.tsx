@@ -77,37 +77,46 @@ export default function Upload() {
 
   // Watch for completion
   useEffect(() => {
-    if (documentData && currentProcessing) {
-      if (documentData.status === "completed") {
-        setCurrentProcessing({
-          ...currentProcessing,
-          status: "completed",
-          currentPage: documentData.processedPages || 0,
-          message: "Processing completed!",
-        });
-        setCompletedDocId(documentData.id);
-        setShowSuccessDialog(true);
-      } else if (documentData.status === "failed") {
-        setCurrentProcessing({
-          ...currentProcessing,
-          status: "failed",
-          message: documentData.errorMessage || "Processing failed",
-        });
-        toast({
-          variant: "destructive",
-          title: "Processing failed",
-          description: documentData.errorMessage || "An error occurred during processing",
-        });
-      } else if (documentData.status === "processing") {
-        setCurrentProcessing({
-          ...currentProcessing,
+    if (!documentData || !currentProcessing) return;
+
+    const prevStatus = currentProcessing.status;
+    const newStatus = documentData.status;
+
+    if (newStatus === "completed" && prevStatus !== "completed") {
+      setCurrentProcessing((prev) => ({
+        ...prev!,
+        status: "completed",
+        currentPage: documentData.processedPages || 0,
+        message: "Processing completed!",
+      }));
+      setCompletedDocId(documentData.id);
+      setShowSuccessDialog(true);
+    } else if (newStatus === "failed" && prevStatus !== "failed") {
+      setCurrentProcessing((prev) => ({
+        ...prev!,
+        status: "failed",
+        message: documentData.errorMessage || "Processing failed",
+      }));
+      toast({
+        variant: "destructive",
+        title: "Processing failed",
+        description: documentData.errorMessage || "An error occurred during processing",
+      });
+    } else if (newStatus === "processing") {
+      const hasChanged = 
+        currentProcessing.currentPage !== (documentData.processedPages || 0) ||
+        currentProcessing.totalPages !== (documentData.totalPages || 0);
+      
+      if (hasChanged) {
+        setCurrentProcessing((prev) => ({
+          ...prev!,
           status: "processing",
           currentPage: documentData.processedPages || 0,
           totalPages: documentData.totalPages || 0,
-        });
+        }));
       }
     }
-  }, [documentData, currentProcessing, toast]);
+  }, [documentData, currentProcessing?.status, currentProcessing?.currentPage, currentProcessing?.totalPages, toast]);
 
   const handleUpload = async (file: File) => {
     await uploadMutation.mutateAsync(file);
