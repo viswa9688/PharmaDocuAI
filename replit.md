@@ -14,17 +14,19 @@ AI-powered system to process scanned batch record PDFs, automatically classify p
    - Document viewer with page grid and detail panel
    - **Side-by-side viewer** - View original scanned page images alongside extracted data
    - **Structured data display** - Tables, form fields, checkboxes, handwriting annotations, signatures
+   - **Page structure viewer** - Displays recognized sections with field mapping and content organization
    - Quality issue alerts and classification badges
    - Sidebar navigation
 3. **Backend Services**:
    - **Google Document AI Form Parser** - Comprehensive OCR with structure recognition
    - **High-accuracy extraction module** - Extracts tables, form fields, checkboxes, handwritten text, signatures with positional data
+   - **Layout Analyzer** - Identifies page structure, detects sections, groups elements spatially, and maps to predefined fields
    - OpenAI-powered page classification with rule-based fallback
    - PDF processing with page extraction and image generation
    - **Page image extraction** - Converts each PDF page to PNG (scale: 2) using pdf-to-img
    - Complete REST API for upload, processing, retrieval, export
    - **Secure image serving** - Hardened path validation preventing directory traversal
-   - **Rich metadata storage** - All extraction data stored in JSONB with organized sections
+   - **Rich metadata storage** - Extraction and layout data stored in JSONB with organized sections
 4. **Database Layer** - Full PostgreSQL integration with Drizzle ORM
 
 ### Architecture
@@ -46,6 +48,18 @@ Without these credentials:
 - Classification uses rule-based fallback instead of AI
 
 ## Recent Changes
+**November 25, 2025** (Session 3):
+- **Layout Analysis & Field Recognition Module**: Implemented comprehensive LayoutAnalyzer service to identify page structure and map extracted data to predefined fields:
+  - **Section Detection**: Pattern-matching recognizes 7 batch record section types with correct taxonomy (materials_log, equipment_log, cip_sip_record, filtration_step, filling_log, inspection_sheet, reconciliation_page)
+  - **Spatial Grouping**: Algorithms group extracted elements (tables, form fields, checkboxes, handwritten text) into sections based on bounding box proximity and vertical positioning
+  - **Field Mapping**: Automatically extracts structured fields (batch number, lot number, date, temperature, quantity, operator) from recognized text patterns
+  - **Layout Style Detection**: Identifies page layout (single_column, multi_column, mixed, table_based) and page structure (headers, footers, column count)
+  - **Pipeline Integration**: Layout analyzer runs after Document AI extraction, storing results in `pages.metadata.layout` JSONB field
+  - **UI Enhancement**: PageDetailPanel displays structured sections with section type badges, confidence scores, extracted fields, and content summaries (table/checkbox/handwritten note counts)
+- All section type identifiers corrected to match required taxonomy
+- Architecture supports downstream rule checking and anomaly detection
+- Production-ready for user testing with actual batch record documents
+
 **November 25, 2025** (Session 2):
 - **Comprehensive Text Extraction Module**: Enhanced DocumentAIService with high-accuracy extraction methods:
   - **Tables**: Row/column structure with cell values, headers, and positions (basic tables supported; complex rowSpan/colSpan has known limitations)
@@ -84,7 +98,7 @@ client/
     pages/          # Route pages (upload, documents, viewer)
     lib/            # Query client and utilities
 server/
-  services/         # Document AI, classifier, PDF processor
+  services/         # Document AI, classifier, PDF processor, layout analyzer
   routes.ts         # API endpoints
   db-storage.ts     # PostgreSQL storage layer
   storage.ts        # In-memory fallback storage
