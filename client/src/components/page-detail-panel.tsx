@@ -13,7 +13,7 @@ import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Page } from "@shared/schema";
 import { useParams } from "wouter";
-import { CheckSquare, Square, FileText, PenLine, FileSignature } from "lucide-react";
+import { CheckSquare, Square, FileText, PenLine, FileSignature, LayoutGrid } from "lucide-react";
 
 interface PageDetailPanelProps {
   page: Page | null;
@@ -41,6 +41,10 @@ export function PageDetailPanel({ page, open, onOpenChange }: PageDetailPanelPro
     extraction.handwrittenRegions?.length > 0 ||
     extraction.signatures?.length > 0
   );
+
+  // Extract layout analysis from metadata
+  const layout = page.metadata?.layout || null;
+  const hasSections = layout && layout.sections && layout.sections.length > 0;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -310,6 +314,115 @@ export function PageDetailPanel({ page, open, onOpenChange }: PageDetailPanelPro
                       </div>
                     </div>
                   )}
+                </div>
+              </>
+            )}
+
+            {/* Structured Layout Analysis */}
+            {hasSections && (
+              <>
+                <Separator />
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-sm font-medium flex items-center gap-2 mb-2">
+                      <LayoutGrid className="h-4 w-4" />
+                      Page Structure & Field Recognition
+                    </h3>
+                    <div className="text-xs text-muted-foreground">
+                      Layout: {layout.layoutStyle?.replace(/_/g, ' ')} • {layout.sections.length} section{layout.sections.length !== 1 ? 's' : ''} detected
+                    </div>
+                  </div>
+
+                  {/* Display each recognized section */}
+                  {layout.sections.map((section: any, sectionIdx: number) => (
+                    <Card key={sectionIdx} className="p-4" data-testid={`section-${sectionIdx}`}>
+                      <div className="space-y-3">
+                        {/* Section Header */}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="font-mono text-xs">
+                                {section.sectionType.replace(/_/g, ' ')}
+                              </Badge>
+                              {section.confidence && (
+                                <span className="text-xs text-muted-foreground">
+                                  {Math.round(section.confidence)}% confidence
+                                </span>
+                              )}
+                            </div>
+                            {section.sectionTitle && (
+                              <div className="text-sm font-medium mt-1">
+                                {section.sectionTitle}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Extracted Fields */}
+                        {section.fields && Object.keys(section.fields).length > 0 && (
+                          <div className="space-y-2">
+                            <h4 className="text-xs font-medium text-muted-foreground">
+                              Extracted Fields ({Object.keys(section.fields).length})
+                            </h4>
+                            <div className="grid grid-cols-1 gap-2">
+                              {Object.entries(section.fields).map(([fieldName, fieldValue]: [string, any]) => (
+                                <div
+                                  key={fieldName}
+                                  className="flex items-start justify-between gap-2 p-2 bg-muted/50 rounded"
+                                  data-testid={`field-${fieldName}`}
+                                >
+                                  <span className="text-xs font-medium text-muted-foreground capitalize">
+                                    {fieldName.replace(/_/g, ' ')}:
+                                  </span>
+                                  <div className="flex-1 text-right">
+                                    <span className="text-xs font-mono">
+                                      {typeof fieldValue.value === 'boolean' 
+                                        ? (fieldValue.value ? '✓' : '✗')
+                                        : String(fieldValue.value)}
+                                    </span>
+                                    {fieldValue.confidence && (
+                                      <span className="text-xs text-muted-foreground ml-2">
+                                        ({Math.round(fieldValue.confidence)}%)
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Section Content Summary */}
+                        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                          {section.tables && section.tables.length > 0 && (
+                            <Badge variant="secondary" className="text-xs">
+                              {section.tables.length} table{section.tables.length !== 1 ? 's' : ''}
+                            </Badge>
+                          )}
+                          {section.checkboxes && section.checkboxes.length > 0 && (
+                            <Badge variant="secondary" className="text-xs">
+                              {section.checkboxes.length} checkbox{section.checkboxes.length !== 1 ? 'es' : ''}
+                            </Badge>
+                          )}
+                          {section.handwrittenNotes && section.handwrittenNotes.length > 0 && (
+                            <Badge variant="secondary" className="text-xs">
+                              {section.handwrittenNotes.length} handwritten note{section.handwrittenNotes.length !== 1 ? 's' : ''}
+                            </Badge>
+                          )}
+                          {section.signatures && section.signatures.length > 0 && (
+                            <Badge variant="secondary" className="text-xs">
+                              {section.signatures.length} signature{section.signatures.length !== 1 ? 's' : ''}
+                            </Badge>
+                          )}
+                          {section.textBlocks && section.textBlocks.length > 0 && (
+                            <Badge variant="secondary" className="text-xs">
+                              {section.textBlocks.length} text block{section.textBlocks.length !== 1 ? 's' : ''}
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
                 </div>
               </>
             )}
