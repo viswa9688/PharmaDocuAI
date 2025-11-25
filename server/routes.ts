@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
+import path from "path";
 import { memStorage } from "./storage";
 import { createDocumentAIService } from "./services/document-ai";
 import { createClassifierService } from "./services/classifier";
@@ -170,6 +171,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Serve page images
+  app.get("/api/documents/:docId/pages/:pageNumber/image", async (req, res) => {
+    try {
+      const { docId, pageNumber } = req.params;
+      const pages = await storage.getPagesByDocument(docId);
+      const page = pages.find(p => p.pageNumber === parseInt(pageNumber));
+      
+      if (!page || !page.imagePath) {
+        return res.status(404).json({ error: "Page image not found" });
+      }
+
+      const imagePath = path.join(process.cwd(), "uploads", page.imagePath);
+      res.sendFile(imagePath);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Process document function
   async function processDocument(documentId: string, pdfBuffer: Buffer) {
     try {
@@ -183,6 +202,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.warn("PDF parsing failed, using default page count for demo:", pdfError.message);
       }
       await storage.updateDocument(documentId, { totalPages: pageCount });
+
+      // Extract page images for side-by-side viewing
+      let pageImages: string[] = [];
+      try {
+        console.log(`Extracting images for ${pageCount} pages...`);
+        pageImages = await pdfProcessor.extractPageImages(pdfBuffer, documentId);
+        console.log(`Successfully extracted ${pageImages.length} page images`);
+      } catch (imageError: any) {
+        console.warn("Failed to extract page images:", imageError.message);
+        // Continue without images - they're not critical for processing
+      }
 
       const processedPages: Array<{ pageNumber: number; text: string; classification: any }> = [];
       let usedFallback = false;
@@ -223,6 +253,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   classification: classification.classification,
                   confidence: classification.confidence,
                   extractedText,
+                  imagePath: pageImages[actualPageNumber - 1], // Associate image with page
                   issues: [],
                   metadata: { 
                     reasoning: classification.reasoning,
@@ -260,6 +291,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 classification: classification.classification,
                 confidence: classification.confidence,
                 extractedText,
+                imagePath: pageImages[pageNumber - 1], // Associate image with page
                 issues: [],
                 metadata: { reasoning: classification.reasoning },
               });
@@ -320,6 +352,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             classification: mockClassification,
             confidence: 0.75,
             extractedText: mockText,
+            imagePath: pageImages[pageNumber - 1], // Associate image with page
             issues: [reason],
             metadata: { mock: true },
           });
