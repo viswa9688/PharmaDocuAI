@@ -34,6 +34,11 @@ export class DocumentAIService {
         content: encodedImage,
         mimeType,
       },
+      processOptions: {
+        ocrConfig: {
+          enableNativePdfParsing: true,
+        },
+      },
     };
 
     const [result] = await this.client.processDocument(request);
