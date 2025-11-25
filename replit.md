@@ -50,6 +50,12 @@ Without these credentials:
 - Classification uses rule-based fallback instead of AI
 
 ## Recent Changes
+**November 25, 2025** (Session 5):
+- **Fixed Document Persistence Bug**: Switched from in-memory MemStorage to PostgreSQL DBStorage in server/routes.ts
+  - Documents now persist across page refreshes and server restarts
+  - All CRUD operations (documents, pages, quality issues) flow through Drizzle ORM to PostgreSQL
+  - DATABASE_URL environment variable used for connection
+
 **November 25, 2025** (Session 4):
 - **Signature & Approval Tracking Module** (Architect-approved, production-ready): Implemented comprehensive SignatureAnalyzer service with canonical checkpoint-based validation for pharmaceutical batch record compliance:
   - **Canonical Checkpoint Template**: Validates against required sequence (operator → reviewer → qa_reviewer → qa_approver → final_approval) with flexible final role acceptance (verifier/manager/released_by)
