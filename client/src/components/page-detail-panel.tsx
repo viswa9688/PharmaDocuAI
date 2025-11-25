@@ -9,7 +9,9 @@ import { ClassificationBadge } from "./classification-badge";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Card } from "@/components/ui/card";
 import type { Page } from "@shared/schema";
+import { useParams } from "wouter";
 
 interface PageDetailPanelProps {
   page: Page | null;
@@ -18,22 +20,60 @@ interface PageDetailPanelProps {
 }
 
 export function PageDetailPanel({ page, open, onOpenChange }: PageDetailPanelProps) {
+  const params = useParams();
+  const documentId = params.id as string;
+
   if (!page) return null;
+
+  // Use stored image path if available, otherwise construct URL
+  const imageUrl = page.imagePath 
+    ? `/api/documents/${documentId}/pages/${page.pageNumber}/image`
+    : null;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-xl">
-        <SheetHeader>
-          <SheetTitle data-testid="text-page-title">
-            Page {page.pageNumber} Details
-          </SheetTitle>
-          <SheetDescription>
-            Classification results and extracted content
-          </SheetDescription>
-        </SheetHeader>
+      <SheetContent className="w-full sm:max-w-6xl p-0">
+        <div className="p-6 border-b">
+          <SheetHeader>
+            <SheetTitle data-testid="text-page-title">
+              Page {page.pageNumber} Details
+            </SheetTitle>
+            <SheetDescription>
+              Original scan and extracted data side-by-side
+            </SheetDescription>
+          </SheetHeader>
+        </div>
 
-        <ScrollArea className="h-[calc(100vh-8rem)] mt-6 pr-4">
-          <div className="space-y-6">
+        <div className="grid grid-cols-2 gap-6 p-6 h-[calc(100vh-10rem)]">
+          {/* Left: Page Image */}
+          <div className="space-y-4">
+            <h3 className="text-sm font-medium">Scanned Page</h3>
+            <Card className="overflow-hidden">
+              <ScrollArea className="h-[calc(100vh-14rem)]">
+                {imageUrl ? (
+                  <img
+                    src={imageUrl}
+                    alt={`Page ${page.pageNumber}`}
+                    className="w-full h-auto"
+                    data-testid="img-page-scan"
+                    onError={(e) => {
+                      // Hide broken image and show error message
+                      e.currentTarget.style.display = 'none';
+                      const errorDiv = e.currentTarget.parentElement?.querySelector('.image-error');
+                      if (errorDiv) errorDiv.classList.remove('hidden');
+                    }}
+                  />
+                ) : null}
+                <div className={`flex items-center justify-center h-96 text-muted-foreground ${imageUrl ? 'hidden image-error' : ''}`}>
+                  {imageUrl ? 'Failed to load image' : 'No image available'}
+                </div>
+              </ScrollArea>
+            </Card>
+          </div>
+
+          {/* Right: Extracted Data */}
+          <ScrollArea className="h-[calc(100vh-14rem)]">
+            <div className="space-y-6 pr-4">
             <div>
               <h3 className="text-sm font-medium mb-2">Classification</h3>
               <ClassificationBadge
@@ -110,8 +150,9 @@ export function PageDetailPanel({ page, open, onOpenChange }: PageDetailPanelPro
                 </div>
               </>
             )}
-          </div>
-        </ScrollArea>
+            </div>
+          </ScrollArea>
+        </div>
       </SheetContent>
     </Sheet>
   );

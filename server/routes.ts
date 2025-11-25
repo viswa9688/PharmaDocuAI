@@ -175,6 +175,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/documents/:docId/pages/:pageNumber/image", async (req, res) => {
     try {
       const { docId, pageNumber } = req.params;
+      
+      // Validate document exists
+      const doc = await storage.getDocument(docId);
+      if (!doc) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+
+      // Get page scoped to this document
       const pages = await storage.getPagesByDocument(docId);
       const page = pages.find(p => p.pageNumber === parseInt(pageNumber));
       
@@ -182,9 +190,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Page image not found" });
       }
 
-      const imagePath = path.join(process.cwd(), "uploads", page.imagePath);
-      res.sendFile(imagePath);
+      // Sanitize and validate image path to prevent directory traversal
+      const uploadsDir = path.join(process.cwd(), "uploads");
+      const requestedPath = path.join(uploadsDir, page.imagePath);
+      const normalizedPath = path.normalize(requestedPath);
+      
+      // Ensure the resolved path is within uploads directory using relative path check
+      const relativePath = path.relative(uploadsDir, normalizedPath);
+      if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+        console.error("Directory traversal attempt detected:", { 
+          imagePath: page.imagePath, 
+          relativePath,
+          documentId: docId 
+        });
+        return res.status(403).json({ error: "Invalid image path" });
+      }
+
+      res.sendFile(normalizedPath);
     } catch (error: any) {
+      console.error("Error serving page image:", error);
       res.status(500).json({ error: error.message });
     }
   });
