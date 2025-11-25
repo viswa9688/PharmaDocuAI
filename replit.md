@@ -12,13 +12,16 @@ AI-powered system to process scanned batch record PDFs, automatically classify p
    - Upload page with drag-and-drop
    - Document list view with status tracking
    - Document viewer with page grid and detail panel
+   - **Side-by-side viewer** - View original scanned page images alongside extracted data
    - Quality issue alerts and classification badges
    - Sidebar navigation
 3. **Backend Services**:
    - Google Document AI integration for OCR
    - OpenAI-powered page classification with rule-based fallback
-   - PDF processing with page extraction
+   - PDF processing with page extraction and image generation
+   - **Page image extraction** - Converts each PDF page to PNG (scale: 2) using pdf-to-img
    - Complete REST API for upload, processing, retrieval, export
+   - **Secure image serving** - Hardened path validation preventing directory traversal
 4. **Database Layer** - Full PostgreSQL integration with Drizzle ORM
 
 ### Architecture
@@ -40,6 +43,14 @@ Without these credentials:
 - Classification uses rule-based fallback instead of AI
 
 ## Recent Changes
+**November 25, 2025**:
+- Implemented side-by-side page viewer with original scanned images
+- Added page image extraction using pdf-to-img library (PNG, scale: 2)
+- Created secure API endpoint for serving page images
+- Fixed critical directory traversal vulnerabilities with path.relative() validation
+- Updated PageDetailPanel UI to wide 2-column layout (image left, data right)
+- Added error handling for missing or failed image loads
+
 **November 21, 2025**:
 - Fixed all TypeScript type safety issues in storage layers
 - Implemented complete processDocument pipeline
@@ -61,6 +72,8 @@ server/
   storage.ts        # In-memory fallback storage
 shared/
   schema.ts         # Drizzle schema and types
+uploads/
+  page-images/      # Extracted page images organized by document ID
 ```
 
 ## Next Steps
