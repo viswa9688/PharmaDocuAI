@@ -13,15 +13,18 @@ AI-powered system to process scanned batch record PDFs, automatically classify p
    - Document list view with status tracking
    - Document viewer with page grid and detail panel
    - **Side-by-side viewer** - View original scanned page images alongside extracted data
+   - **Structured data display** - Tables, form fields, checkboxes, handwriting annotations, signatures
    - Quality issue alerts and classification badges
    - Sidebar navigation
 3. **Backend Services**:
-   - Google Document AI integration for OCR
+   - **Google Document AI Form Parser** - Comprehensive OCR with structure recognition
+   - **High-accuracy extraction module** - Extracts tables, form fields, checkboxes, handwritten text, signatures with positional data
    - OpenAI-powered page classification with rule-based fallback
    - PDF processing with page extraction and image generation
    - **Page image extraction** - Converts each PDF page to PNG (scale: 2) using pdf-to-img
    - Complete REST API for upload, processing, retrieval, export
    - **Secure image serving** - Hardened path validation preventing directory traversal
+   - **Rich metadata storage** - All extraction data stored in JSONB with organized sections
 4. **Database Layer** - Full PostgreSQL integration with Drizzle ORM
 
 ### Architecture
@@ -43,7 +46,22 @@ Without these credentials:
 - Classification uses rule-based fallback instead of AI
 
 ## Recent Changes
-**November 25, 2025**:
+**November 25, 2025** (Session 2):
+- **Comprehensive Text Extraction Module**: Enhanced DocumentAIService with high-accuracy extraction methods:
+  - **Tables**: Row/column structure with cell values, headers, and positions (basic tables supported; complex rowSpan/colSpan has known limitations)
+  - **Form Fields**: Key-value pairs (e.g., "Batch Number: 12345") with bounding boxes and confidence scores
+  - **Checkboxes**: Detected checkbox states (checked/unchecked) with associated labels
+  - **Handwritten Regions**: Identified handwritten vs. printed text with confidence scores
+  - **Signature Blocks**: Placeholder for future signature detection
+  - **Text Blocks**: Paragraph-level text with positional information
+  - **Bounding Boxes**: Every element includes normalized pixel coordinates (x, y, width, height) for downstream classification and rule checking
+  - **Page Dimensions**: Width/height stored for coordinate normalization
+- All extraction data stored in `pages.metadata.extraction` JSONB field with organized sections
+- Updated PageDetailPanel UI to display all extracted structures in dedicated sections
+- Enhanced table rendering with colSpan/rowSpan support (basic scenarios)
+- **Known Limitation**: Complex multi-span tables may have rendering issues; simple tables work correctly
+
+**November 25, 2025** (Session 1):
 - Implemented side-by-side page viewer with original scanned images
 - Added page image extraction using pdf-to-img library (PNG, scale: 2)
 - Created secure API endpoint for serving page images
