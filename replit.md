@@ -50,6 +50,17 @@ Without these credentials:
 - Classification uses rule-based fallback instead of AI
 
 ## Recent Changes
+**December 04, 2025** (Session 6):
+- **Comprehensive Validation Engine**: Implemented full validation system for pharmaceutical batch record compliance:
+  - **Value Extraction Module**: Parses and normalizes all numeric values from form fields, tables, handwritten text, and raw text patterns with source location tracking (page number, section type, field label, bounding box, context)
+  - **Formula Detection**: Pattern recognition for yield %, material reconciliation, hold time, temperature averages, pressure differentials with operand extraction and recalculation
+  - **Formula Library**: Calculation functions with unit-aware comparison and configurable tolerance logic
+  - **SOP Rules Engine**: JSON-configurable validation rules for temperature thresholds (2-8°C storage, 65°C CIP, 121°C SIP), hold times (max 24hr), pH ranges (6.0-8.0), pressure limits, required fields
+  - **Cross-Page Validation**: Detects inconsistent batch/lot numbers and timestamp ordering issues
+  - **Human-Readable Alerts**: Categorized alerts (calculation_error, missing_value, range_violation, sequence_error, etc.) with severity levels, suggested actions, and source references
+  - **API Endpoints**: `/api/documents/:id/validation` for document-level validation, `/api/documents/:docId/pages/:pageNumber/validation` for page-level, `/api/validation/rules` for SOP rules management
+  - **UI Components**: ValidationAlerts component with tabbed view (All, Calculations, Missing, Violations), click-to-navigate to source pages, summary statistics
+
 **November 25, 2025** (Session 5):
 - **Fixed Document Persistence Bug**: Switched from in-memory MemStorage to PostgreSQL DBStorage in server/routes.ts
   - Documents now persist across page refreshes and server restarts

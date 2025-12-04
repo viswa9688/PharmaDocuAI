@@ -91,6 +91,155 @@ export type ProcessingStatus = {
   message: string;
 };
 
+// ==========================================
+// VALIDATION ENGINE TYPES
+// ==========================================
+
+// Bounding box for source location tracking
+export type BoundingBox = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+// Source location for tracking where a value came from
+export type SourceLocation = {
+  pageNumber: number;
+  sectionType: string;
+  fieldLabel: string;
+  boundingBox: BoundingBox;
+  surroundingContext: string;
+};
+
+// Normalized extracted value with full metadata
+export type ExtractedValue = {
+  id: string;
+  rawValue: string;
+  numericValue: number | null;
+  unit: string | null;
+  valueType: "numeric" | "date" | "time" | "datetime" | "text" | "boolean";
+  source: SourceLocation;
+  confidence: number;
+  isHandwritten: boolean;
+};
+
+// Formula types supported by the validation engine
+export const formulaTypes = [
+  "yield_percentage",
+  "material_reconciliation", 
+  "hold_time",
+  "temperature_average",
+  "flow_volume",
+  "pressure_differential",
+  "filter_integrity",
+  "concentration",
+  "weight_difference",
+  "time_duration",
+  "custom"
+] as const;
+
+export type FormulaType = typeof formulaTypes[number];
+
+// Detected formula with operands and calculation
+export type DetectedFormula = {
+  id: string;
+  formulaType: FormulaType;
+  formulaExpression: string;
+  operands: {
+    name: string;
+    value: ExtractedValue;
+    role: "numerator" | "denominator" | "addend" | "subtrahend" | "multiplier" | "divisor" | "base" | "operand";
+  }[];
+  expectedResult: number;
+  actualResult: ExtractedValue | null;
+  discrepancy: number | null;
+  tolerancePercent: number;
+  isWithinTolerance: boolean;
+  source: SourceLocation;
+};
+
+// Validation alert severity levels
+export const alertSeverities = ["critical", "high", "medium", "low", "info"] as const;
+export type AlertSeverity = typeof alertSeverities[number];
+
+// Validation alert categories
+export const alertCategories = [
+  "calculation_error",
+  "missing_value",
+  "range_violation",
+  "sequence_error",
+  "unit_mismatch",
+  "trend_anomaly",
+  "consistency_error",
+  "format_error",
+  "sop_violation"
+] as const;
+
+export type AlertCategory = typeof alertCategories[number];
+
+// Validation alert with human-readable details
+export type ValidationAlert = {
+  id: string;
+  category: AlertCategory;
+  severity: AlertSeverity;
+  title: string;
+  message: string;
+  details: string;
+  source: SourceLocation;
+  relatedValues: ExtractedValue[];
+  suggestedAction: string;
+  ruleId: string | null;
+  formulaId: string | null;
+  isResolved: boolean;
+  resolvedBy: string | null;
+  resolvedAt: Date | null;
+  resolution: string | null;
+};
+
+// SOP Rule definition for configurable validation
+export type SOPRule = {
+  id: string;
+  name: string;
+  description: string;
+  category: AlertCategory;
+  severity: AlertSeverity;
+  enabled: boolean;
+  conditions: {
+    fieldPattern: string;
+    sectionTypes: string[];
+    operator: "equals" | "not_equals" | "greater_than" | "less_than" | "between" | "contains" | "matches" | "exists" | "not_exists";
+    value: number | string | boolean | [number, number];
+    unit?: string;
+  }[];
+  errorMessage: string;
+  suggestedAction: string;
+};
+
+// Validation result for a single page
+export type PageValidationResult = {
+  pageNumber: number;
+  extractedValues: ExtractedValue[];
+  detectedFormulas: DetectedFormula[];
+  alerts: ValidationAlert[];
+  validationTimestamp: Date;
+};
+
+// Document-level validation summary
+export type DocumentValidationSummary = {
+  documentId: string;
+  totalPages: number;
+  pagesValidated: number;
+  totalAlerts: number;
+  alertsBySeverity: Record<AlertSeverity, number>;
+  alertsByCategory: Record<AlertCategory, number>;
+  formulasChecked: number;
+  formulaDiscrepancies: number;
+  crossPageIssues: ValidationAlert[];
+  validationTimestamp: Date;
+  isComplete: boolean;
+};
+
 // Classification result type
 export type ClassificationResult = {
   pageNumber: number;

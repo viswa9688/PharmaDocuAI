@@ -6,6 +6,7 @@ import { DocumentStats } from "@/components/document-stats";
 import { PageGrid } from "@/components/page-grid";
 import { PageDetailPanel } from "@/components/page-detail-panel";
 import { QualityAlert } from "@/components/quality-alert";
+import { ValidationAlerts } from "@/components/validation-alerts";
 import { ArrowLeft, Download } from "lucide-react";
 import type { Document, Page, QualityIssue, DocumentSummary } from "@shared/schema";
 
@@ -94,6 +95,17 @@ export default function DocumentViewer() {
         classifiedPages={pages.length}
         issueCount={summary.issueCount}
         avgConfidence={summary.avgConfidence}
+      />
+
+      {/* Validation Alerts Section */}
+      <ValidationAlerts 
+        documentId={documentId}
+        onPageClick={(pageNumber) => {
+          const page = pages.find(p => p.pageNumber === pageNumber);
+          if (page) {
+            handlePageClick(page);
+          }
+        }}
       />
 
       {issues.length > 0 && (

@@ -8,6 +8,7 @@ import { createClassifierService } from "./services/classifier";
 import { createPDFProcessorService } from "./services/pdf-processor";
 import { LayoutAnalyzer } from "./services/layout-analyzer";
 import { SignatureAnalyzer } from "./services/signature-analyzer";
+import { ValidationEngine } from "./services/validation-engine";
 
 // Use PostgreSQL database storage for persistence
 const storage = new DBStorage();
@@ -25,6 +26,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const pdfProcessor = createPDFProcessorService();
   const layoutAnalyzer = new LayoutAnalyzer();
   const signatureAnalyzer = new SignatureAnalyzer();
+  const validationEngine = new ValidationEngine();
 
   // Upload and process document
   app.post("/api/documents/upload", upload.single("file"), async (req, res) => {
@@ -227,6 +229,97 @@ export async function registerRoutes(app: Express): Promise<Server> {
           allCheckboxesChecked: approvals.allCheckboxesChecked,
         },
       });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get validation results for a document
+  app.get("/api/documents/:id/validation", async (req, res) => {
+    try {
+      const doc = await storage.getDocument(req.params.id);
+      if (!doc) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+
+      const pages = await storage.getPagesByDocument(req.params.id);
+      
+      // Run validation on all pages
+      const pageResults = await Promise.all(
+        pages.map(async (page) => {
+          return validationEngine.validatePage(
+            page.pageNumber,
+            page.metadata || {},
+            page.classification,
+            page.extractedText || ""
+          );
+        })
+      );
+
+      // Get document-level summary
+      const summary = await validationEngine.validateDocument(req.params.id, pageResults);
+
+      res.json({
+        summary,
+        pageResults,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get validation alerts for a specific page
+  app.get("/api/documents/:docId/pages/:pageNumber/validation", async (req, res) => {
+    try {
+      const { docId, pageNumber } = req.params;
+      
+      const doc = await storage.getDocument(docId);
+      if (!doc) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+
+      const pages = await storage.getPagesByDocument(docId);
+      const page = pages.find(p => p.pageNumber === parseInt(pageNumber));
+      
+      if (!page) {
+        return res.status(404).json({ error: "Page not found" });
+      }
+
+      const result = await validationEngine.validatePage(
+        page.pageNumber,
+        page.metadata || {},
+        page.classification,
+        page.extractedText || ""
+      );
+
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get SOP rules
+  app.get("/api/validation/rules", async (_req, res) => {
+    try {
+      const rules = validationEngine.getSOPRules();
+      res.json(rules);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Update SOP rule
+  app.patch("/api/validation/rules/:ruleId", async (req, res) => {
+    try {
+      const { ruleId } = req.params;
+      const updates = req.body;
+      
+      const success = validationEngine.updateSOPRule(ruleId, updates);
+      if (!success) {
+        return res.status(404).json({ error: "Rule not found" });
+      }
+
+      res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
