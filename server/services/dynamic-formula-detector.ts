@@ -356,21 +356,44 @@ export class DynamicFormulaDetector {
   private normalizeExpression(expression: string, variables: string[]): string {
     let normalized = expression;
     
+    // Step 1: Replace multiplication/division symbols FIRST (before removing spaces)
     normalized = normalized.replace(/[×xX]/g, "*");
     normalized = normalized.replace(/[÷]/g, "/");
+
+    // Step 2: Replace variable phrases with canonical names BEFORE removing spaces
+    // Order matters: more specific patterns first
+    
+    // Zn-related patterns
+    normalized = normalized.replace(/Assay\s+of\s+Zn\s+on\s+dried\s+basis\s*%?/gi, "Zn_Assay");
+    normalized = normalized.replace(/Assay\s+of\s+Zn\s*%?/gi, "Zn_Assay");
+    normalized = normalized.replace(/Content\s+of\s+Zn\s+on\s+dried\s+basis\s*%?/gi, "Zn_Assay");
+    normalized = normalized.replace(/Content\s+of\s+Zn\s*%?/gi, "Zn_Assay");
+    normalized = normalized.replace(/Zn\s+Assay\s*%?/gi, "Zn_Assay");
+    
+    // Assay dried basis patterns
+    normalized = normalized.replace(/Assay\s+on\s+dried\s+basis\s*%?/gi, "Assay_Dried_Basis");
+    normalized = normalized.replace(/dried\s+basis\s*%?/gi, "Assay_Dried_Basis");
+    
+    // Generic assay
+    normalized = normalized.replace(/%\s*Assay/gi, "Assay");
+    
+    // LOD patterns - normalize the (100-LOD) pattern
+    normalized = normalized.replace(/\(\s*100\s*-\s*LOD\s*\)/gi, "(100-LOD)");
+    normalized = normalized.replace(/100\s*-\s*LOD/gi, "(100-LOD)");
+
+    // Step 3: Now remove extra spaces
+    normalized = normalized.replace(/\s+/g, " ").trim();
+    
+    // Step 4: Add implicit multiplication between:
+    // - closing paren and variable: )(100-LOD) Assay -> (100-LOD)*Assay
+    // - closing paren and opening paren with no operator
+    normalized = normalized.replace(/\)\s*([A-Za-z_])/g, ")*$1");
+    normalized = normalized.replace(/\)\s*\(/g, ")*(");
+    
+    // Step 5: Remove remaining spaces (for mathjs)
     normalized = normalized.replace(/\s+/g, "");
 
-    normalized = normalized.replace(/\(100-LOD\)/gi, "(100-LOD)");
-    normalized = normalized.replace(/100-LOD/gi, "(100-LOD)");
-
-    if (/zn/i.test(expression)) {
-      normalized = normalized.replace(/Assay\s*(of\s+)?Zn(\s*on\s+dried\s*basis)?(%)?/gi, "Zn_Assay");
-      normalized = normalized.replace(/Content\s*of\s*Zn(\s*on\s+dried\s*basis)?(%)?/gi, "Zn_Assay");
-    }
-    
-    normalized = normalized.replace(/Assay\s*(on\s+)?dried\s*basis(%)?/gi, "Assay_Dried_Basis");
-    normalized = normalized.replace(/%Assay/gi, "Assay");
-
+    console.log(`[DynamicFormulaDetector] Normalized expression: "${expression}" -> "${normalized}"`);
     return normalized;
   }
 
@@ -550,6 +573,7 @@ export class DynamicFormulaDetector {
     try {
       const scope: Record<string, number> = {};
 
+      // Build scope with all available variables from mappings
       for (const varName of parsedFormula.variables) {
         if (varName.startsWith("CONST_")) {
           scope[varName] = parseFloat(varName.replace("CONST_", ""));
@@ -559,30 +583,28 @@ export class DynamicFormulaDetector {
         const mapping = mappings.find(m => this.variablesMatch(m.name, varName));
 
         if (mapping) {
-          const safeKey = varName.replace(/[^a-zA-Z0-9_]/g, "_");
-          scope[safeKey] = mapping.value;
-          console.log(`[DynamicFormulaDetector] Mapped ${varName} -> ${safeKey} = ${mapping.value}`);
+          // Use the exact variable name as it appears in normalizedExpression
+          scope[varName] = mapping.value;
+          console.log(`[DynamicFormulaDetector] Mapped ${varName} = ${mapping.value}`);
         } else {
           console.log(`[DynamicFormulaDetector] WARNING: No mapping found for variable ${varName}`);
+          return { success: false, result: 0, error: `Missing variable: ${varName}` };
         }
       }
 
+      // The expression should already be normalized with proper variable names
       let evalExpression = parsedFormula.normalizedExpression;
       
-      for (const varName of parsedFormula.variables) {
-        if (varName.startsWith("CONST_")) continue;
-        const safeKey = varName.replace(/[^a-zA-Z0-9_]/g, "_");
-        const pattern = new RegExp(varName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
-        evalExpression = evalExpression.replace(pattern, safeKey);
-      }
-
+      // Clean up any remaining invalid characters but keep valid math symbols
       evalExpression = evalExpression.replace(/[^a-zA-Z0-9_+\-*/().]/g, "");
       
-      console.log(`[DynamicFormulaDetector] Evaluating: ${evalExpression} with scope:`, scope);
+      console.log(`[DynamicFormulaDetector] Evaluating: ${evalExpression}`);
+      console.log(`[DynamicFormulaDetector] Scope:`, scope);
       
       const result = math.evaluate(evalExpression, scope);
       
       if (typeof result === "number" && !isNaN(result) && isFinite(result)) {
+        console.log(`[DynamicFormulaDetector] Result: ${result}`);
         return { success: true, result };
       }
       
