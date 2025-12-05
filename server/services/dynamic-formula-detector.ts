@@ -14,18 +14,37 @@ interface ParsedFormula {
   columnIndex: number;
 }
 
-interface TableCell {
+interface DocumentAITableCell {
+  rowIndex: number;
+  colIndex: number;
+  text: string;
+  confidence?: number;
+  boundingBox?: { x: number; y: number; width: number; height: number };
+  isHeader?: boolean;
+  rowSpan?: number;
+  colSpan?: number;
+}
+
+interface DocumentAITable {
+  rowCount: number;
+  columnCount: number;
+  cells: DocumentAITableCell[];
+  confidence?: number;
+  boundingBox?: { x: number; y: number; width: number; height: number };
+}
+
+interface SimpleTableCell {
   text: string;
   boundingBox?: { x: number; y: number; width: number; height: number };
   confidence?: number;
 }
 
-interface TableRow {
-  cells: TableCell[];
+interface SimpleTableRow {
+  cells: SimpleTableCell[];
 }
 
-interface Table {
-  rows: TableRow[];
+interface SimpleTable {
+  rows: SimpleTableRow[];
   boundingBox?: { x: number; y: number; width: number; height: number };
   confidence?: number;
 }
@@ -58,7 +77,7 @@ export class DynamicFormulaDetector {
   }
 
   detectDynamicFormulas(
-    tables: Table[],
+    tables: any[],
     extractedText: string,
     pageNumber: number,
     sectionType: string
@@ -69,7 +88,11 @@ export class DynamicFormulaDetector {
     console.log(`[DynamicFormulaDetector] Received ${tables.length} tables to analyze`);
 
     for (let i = 0; i < tables.length; i++) {
-      const table = tables[i];
+      const rawTable = tables[i];
+      
+      // Convert Document AI format to simple row-based format
+      const table = this.normalizeTableFormat(rawTable);
+      
       console.log(`[DynamicFormulaDetector] Table ${i}: ${table.rows?.length || 0} rows`);
       
       if (table.rows && table.rows.length > 0 && table.rows[0].cells) {
@@ -85,7 +108,51 @@ export class DynamicFormulaDetector {
     return formulas;
   }
 
-  private processTable(table: Table, pageNumber: number, sectionType: string): DetectedFormula[] {
+  private normalizeTableFormat(rawTable: any): SimpleTable {
+    // If already in simple format (has rows property)
+    if (rawTable.rows && Array.isArray(rawTable.rows)) {
+      return rawTable as SimpleTable;
+    }
+
+    // Convert Document AI format (flat cells array) to nested rows format
+    if (rawTable.cells && Array.isArray(rawTable.cells)) {
+      const docTable = rawTable as DocumentAITable;
+      const rowCount = docTable.rowCount || 0;
+      const colCount = docTable.columnCount || 0;
+      
+      console.log(`[DynamicFormulaDetector] Converting Document AI table: ${rowCount} rows x ${colCount} cols, ${docTable.cells.length} cells`);
+      
+      // Create 2D array to hold cells
+      const rowsArray: SimpleTableCell[][] = [];
+      for (let r = 0; r < rowCount; r++) {
+        rowsArray.push(new Array(colCount).fill(null).map(() => ({ text: "", confidence: 0 })));
+      }
+      
+      // Populate cells from flat array
+      for (const cell of docTable.cells) {
+        const row = cell.rowIndex;
+        const col = cell.colIndex;
+        if (row >= 0 && row < rowCount && col >= 0 && col < colCount) {
+          rowsArray[row][col] = {
+            text: cell.text || "",
+            boundingBox: cell.boundingBox,
+            confidence: cell.confidence
+          };
+        }
+      }
+      
+      return {
+        rows: rowsArray.map(cells => ({ cells })),
+        boundingBox: docTable.boundingBox,
+        confidence: docTable.confidence
+      };
+    }
+
+    console.log(`[DynamicFormulaDetector] Unknown table format:`, Object.keys(rawTable));
+    return { rows: [] };
+  }
+
+  private processTable(table: SimpleTable, pageNumber: number, sectionType: string): DetectedFormula[] {
     const formulas: DetectedFormula[] = [];
     
     if (!table.rows || table.rows.length < 2) return formulas;
@@ -169,7 +236,7 @@ export class DynamicFormulaDetector {
     return formulas;
   }
 
-  private extractFormulasFromHeaders(cells: TableCell[]): ParsedFormula[] {
+  private extractFormulasFromHeaders(cells: SimpleTableCell[]): ParsedFormula[] {
     const formulas: ParsedFormula[] = [];
 
     // Pattern 1: "Description (Variable) = formula" - captures variable letter from parentheses
@@ -308,7 +375,7 @@ export class DynamicFormulaDetector {
   }
 
   private buildVariableMappings(
-    table: Table, 
+    table: SimpleTable, 
     pageNumber: number, 
     sectionType: string
   ): VariableMapping[][] {
@@ -316,7 +383,7 @@ export class DynamicFormulaDetector {
     
     if (!table.rows || table.rows.length < 2) return mappings;
 
-    const headers = table.rows[0].cells.map(c => c.text || "");
+    const headers = table.rows[0].cells.map((c: SimpleTableCell) => c.text || "");
 
     for (let rowIdx = 1; rowIdx < table.rows.length; rowIdx++) {
       const row = table.rows[rowIdx];
@@ -427,7 +494,7 @@ export class DynamicFormulaDetector {
   }
 
   private getColumnValues(
-    table: Table,
+    table: SimpleTable,
     columnIndex: number,
     pageNumber: number,
     sectionType: string
