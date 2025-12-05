@@ -188,7 +188,8 @@ export const alertCategories = [
   "consistency_error",
   "format_error",
   "sop_violation",
-  "data_quality"
+  "data_quality",
+  "data_integrity"  // For strike-offs, corrections, erasures, overwrites
 ] as const;
 
 export type AlertCategory = typeof alertCategories[number];
@@ -263,6 +264,46 @@ export type ClassificationResult = {
   confidence: number;
   extractedText: string;
   issues: string[];
+};
+
+// ==========================================
+// VISUAL ANOMALY DETECTION TYPES
+// ==========================================
+
+// Types of visual anomalies that can be detected
+export const visualAnomalyTypes = [
+  "strike_through",     // Horizontal or diagonal line through text
+  "red_mark",           // Red pen corrections or marks
+  "overwrite",          // Multiple overlapping text/values
+  "erasure",            // Signs of erasure (whitened areas, rubbed out text)
+  "correction_fluid",   // White-out or correction tape marks
+  "scribble"            // Heavy scribbling over text
+] as const;
+
+export type VisualAnomalyType = typeof visualAnomalyTypes[number];
+
+// A detected visual anomaly on a page
+export type VisualAnomaly = {
+  id: string;
+  type: VisualAnomalyType;
+  confidence: number;                // 0-100 detection confidence
+  pageNumber: number;
+  boundingBox: BoundingBox;          // Where the anomaly was detected
+  affectedTextRegion: BoundingBox | null;  // The text region affected (if applicable)
+  affectedText: string | null;       // The text that appears to be affected
+  thumbnailPath: string | null;      // Path to cropped thumbnail of the anomaly
+  severity: AlertSeverity;           // Severity based on GMP implications
+  description: string;               // Human-readable description
+  detectionMethod: string;           // How it was detected (line_detection, color_mask, etc.)
+};
+
+// Result from visual analysis of a page
+export type VisualAnalysisResult = {
+  pageNumber: number;
+  imagePath: string;
+  anomalies: VisualAnomaly[];
+  analysisTimestamp: Date;
+  processingTimeMs: number;
 };
 
 // Document summary type
