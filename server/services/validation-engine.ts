@@ -11,6 +11,7 @@ import type {
   AlertSeverity,
   SOPRule,
   BatchDateBounds,
+  VisualAnomaly,
 } from "@shared/schema";
 
 interface PageMetadata {
@@ -279,7 +280,8 @@ export class ValidationEngine {
       consistency_error: 0,
       format_error: 0,
       sop_violation: 0,
-      data_quality: 0
+      data_quality: 0,
+      data_integrity: 0
     };
 
     for (const alert of allAlerts) {
@@ -3132,6 +3134,85 @@ export class ValidationEngine {
     }
 
     return alerts;
+  }
+
+  createVisualAnomalyAlerts(anomalies: VisualAnomaly[]): ValidationAlert[] {
+    if (!anomalies || anomalies.length === 0) {
+      return [];
+    }
+
+    return anomalies.map(anomaly => {
+      const anomalyTypeDescriptions: Record<string, { title: string; message: string; action: string }> = {
+        strike_through: {
+          title: "Strike-Through Detected",
+          message: "A strike-through line was detected crossing text, indicating a correction or cancellation.",
+          action: "Verify if the strike-through follows GMP documentation practices. Ensure there is an accompanying initialed correction with date."
+        },
+        red_mark: {
+          title: "Red Ink Correction Detected",
+          message: "Red ink marking detected on the document, which may indicate a correction or annotation.",
+          action: "Review the red marking to ensure it follows SOP for corrections. Verify operator initials and date are present if this is a data correction."
+        },
+        overwrite: {
+          title: "Data Overwrite Detected",
+          message: "Multiple overlapping text or values detected, suggesting data may have been overwritten.",
+          action: "Investigate the overwritten area to determine original vs. corrected values. This may require original document review."
+        },
+        erasure: {
+          title: "Possible Erasure Detected",
+          message: "Signs of erasure or correction fluid detected in a data field.",
+          action: "Erasures are typically not permitted in GMP records. Investigate the affected area and determine if a deviation needs to be raised."
+        },
+        correction_fluid: {
+          title: "Correction Fluid Detected",
+          message: "White-out or correction tape marks detected on the document.",
+          action: "Correction fluid is typically prohibited in GMP records. Review the affected area and assess if a deviation is required."
+        },
+        scribble: {
+          title: "Heavy Scribbling Detected",
+          message: "Heavy scribbling or crossing out detected over text.",
+          action: "Review the scribbled area to determine what data was obscured. Verify if proper correction procedures were followed."
+        }
+      };
+
+      const typeInfo = anomalyTypeDescriptions[anomaly.type] || {
+        title: "Visual Anomaly Detected",
+        message: `A ${anomaly.type.replace(/_/g, ' ')} was detected on the document.`,
+        action: "Review the affected area and determine if it indicates a documentation issue."
+      };
+
+      return {
+        id: this.generateAlertId(),
+        category: "data_integrity" as AlertCategory,
+        severity: anomaly.severity,
+        title: typeInfo.title,
+        message: typeInfo.message,
+        details: JSON.stringify({
+          anomalyType: anomaly.type,
+          confidence: anomaly.confidence,
+          detectionMethod: anomaly.detectionMethod,
+          affectedText: anomaly.affectedText,
+          thumbnailPath: anomaly.thumbnailPath,
+          boundingBox: anomaly.boundingBox,
+          description: anomaly.description
+        }),
+        source: {
+          pageNumber: anomaly.pageNumber,
+          sectionType: "visual_analysis",
+          fieldLabel: anomaly.affectedText || "Visual Area",
+          boundingBox: anomaly.boundingBox,
+          surroundingContext: anomaly.description
+        },
+        relatedValues: [],
+        suggestedAction: typeInfo.action,
+        ruleId: `visual_${anomaly.type}`,
+        formulaId: null,
+        isResolved: false,
+        resolvedBy: null,
+        resolvedAt: null,
+        resolution: null
+      };
+    });
   }
 }
 
