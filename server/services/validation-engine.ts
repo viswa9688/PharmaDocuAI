@@ -929,21 +929,68 @@ export class ValidationEngine {
   }
 
   /**
+   * Check if a field label looks like a batch number field, handling OCR typos.
+   * Matches patterns like "Batch No", "Butch No." (OCR error), "Batch Number", "Batch No./Date".
+   * Rejects fields like "Batch Notes", "Batch No Verified" that are not number fields.
+   */
+  private isBatchNumberField(fieldLabel: string): boolean {
+    const label = fieldLabel.toLowerCase().trim();
+    
+    // Word patterns that should match - only close typos of "batch" (edit distance ~1)
+    const batchWords = [
+      "batch",   // correct
+      "butch",   // common OCR: a→u
+      "betch",   // OCR: a→e
+      "botch",   // OCR: a→o
+      "balch",   // OCR: t→l
+      "bateh",   // OCR: c→e
+      "barch",   // OCR: tc→rc
+      "8atch",   // OCR: b→8
+      "ba1ch",   // OCR: t→1
+    ];
+    
+    // Build patterns for each batch word
+    for (const word of batchWords) {
+      // Pattern 1: "Batch No." or "Batch No.:" - period required, allows colon or end
+      if (new RegExp(`^${word}\\s*no\\.\\s*:?\\s*$`, 'i').test(label)) return true;
+      // "Batch No. / Date" or "Batch No./Date" - period + optional whitespace + separator
+      if (new RegExp(`^${word}\\s*no\\.\\s*[/&(]`, 'i').test(label)) return true;
+      
+      // Pattern 2: "Batch No" or "Batch No:" - ends with no/colon, not "Notes"
+      if (new RegExp(`^${word}\\s*no\\s*:?\\s*$`, 'i').test(label)) return true;
+      // "Batch No / Date" or "Batch No/Date" or "Batch No & Expiry" - optional whitespace + separator
+      if (new RegExp(`^${word}\\s*no\\s*[/&(]`, 'i').test(label)) return true;
+      
+      // Pattern 3: "Batch Number" - ends or has separator
+      if (new RegExp(`^${word}\\s*number\\s*:?\\s*$`, 'i').test(label)) return true;
+      if (new RegExp(`^${word}\\s*number\\s*[/&(]`, 'i').test(label)) return true;
+      
+      // Pattern 4: "Batch #" - ends or has separator
+      if (new RegExp(`^${word}\\s*#\\s*:?\\s*$`, 'i').test(label)) return true;
+      if (new RegExp(`^${word}\\s*#\\s*[/&(]`, 'i').test(label)) return true;
+      
+      // Pattern 5: Just "Batch" or "Batch:" at end
+      if (new RegExp(`^${word}\\s*:?\\s*$`, 'i').test(label)) return true;
+    }
+    
+    return false;
+  }
+
+  /**
    * Check if all pages have the same batch number using form fields data.
    * Looks for fields labeled "Batch No", "Batch No.", "Batch Number", etc.
-   * Also detects missing batch numbers (empty values).
+   * Also handles OCR typos like "Butch No." and detects missing batch numbers.
    */
   private checkBatchNumberConsistency(pageResults: PageValidationResult[]): ValidationAlert | null {
-    const batchNumberLabels = ["batch no", "batch no.", "batch number", "batch #"];
     const batchValuesFound: Array<{ value: string; pageNumber: number; source: SourceLocation }> = [];
     const emptyBatchFields: Array<{ pageNumber: number; source: SourceLocation }> = [];
 
     for (const page of pageResults) {
       for (const extractedValue of page.extractedValues) {
-        const fieldLabel = extractedValue.source.fieldLabel.toLowerCase().trim();
+        const fieldLabel = extractedValue.source.fieldLabel;
         
-        // Check if this field is a batch number field
-        if (batchNumberLabels.some(label => fieldLabel === label || fieldLabel.includes("batch no"))) {
+        // Check if this field is a batch number field (with OCR typo handling)
+        if (this.isBatchNumberField(fieldLabel)) {
           const value = extractedValue.rawValue.trim().toUpperCase();
           if (value) {
             batchValuesFound.push({
@@ -1039,18 +1086,59 @@ export class ValidationEngine {
   }
 
   /**
-   * Check if all pages have the same lot number using form fields data.
+   * Check if a field label looks like a lot number field, handling OCR typos.
+   * Matches patterns like "Lot No", "Lot Number", "Lot No./Date", etc.
+   * Rejects fields like "Lot Notes", "Lot No Verified" that are not number fields.
    */
+  private isLotNumberField(fieldLabel: string): boolean {
+    const label = fieldLabel.toLowerCase().trim();
+    
+    // Word patterns that should match - only close typos of "lot" (edit distance ~1)
+    const lotWords = [
+      "lot",   // correct
+      "lat",   // OCR: o→a
+      "lct",   // OCR: o→c
+      "1ot",   // OCR: l→1
+      "l0t",   // OCR: o→0
+      "lo1",   // OCR: t→1
+    ];
+    
+    // Build patterns for each lot word
+    for (const word of lotWords) {
+      // Pattern 1: "Lot No." or "Lot No.:" - period required, allows colon or end
+      if (new RegExp(`^${word}\\s*no\\.\\s*:?\\s*$`, 'i').test(label)) return true;
+      // "Lot No. / Date" or "Lot No./Date" - period + optional whitespace + separator
+      if (new RegExp(`^${word}\\s*no\\.\\s*[/&(]`, 'i').test(label)) return true;
+      
+      // Pattern 2: "Lot No" or "Lot No:" - ends with no/colon, not "Notes"
+      if (new RegExp(`^${word}\\s*no\\s*:?\\s*$`, 'i').test(label)) return true;
+      // "Lot No / Date" or "Lot No/Date" or "Lot No & Code" - optional whitespace + separator
+      if (new RegExp(`^${word}\\s*no\\s*[/&(]`, 'i').test(label)) return true;
+      
+      // Pattern 3: "Lot Number" - ends or has separator
+      if (new RegExp(`^${word}\\s*number\\s*:?\\s*$`, 'i').test(label)) return true;
+      if (new RegExp(`^${word}\\s*number\\s*[/&(]`, 'i').test(label)) return true;
+      
+      // Pattern 4: "Lot #" - ends or has separator
+      if (new RegExp(`^${word}\\s*#\\s*:?\\s*$`, 'i').test(label)) return true;
+      if (new RegExp(`^${word}\\s*#\\s*[/&(]`, 'i').test(label)) return true;
+      
+      // Pattern 5: Just "Lot" or "Lot:" at end
+      if (new RegExp(`^${word}\\s*:?\\s*$`, 'i').test(label)) return true;
+    }
+    
+    return false;
+  }
+
   private checkLotNumberConsistency(pageResults: PageValidationResult[]): ValidationAlert | null {
-    const lotNumberLabels = ["lot no", "lot no.", "lot number", "lot #"];
     const lotValuesFound: Array<{ value: string; pageNumber: number; source: SourceLocation }> = [];
 
     for (const page of pageResults) {
       for (const extractedValue of page.extractedValues) {
-        const fieldLabel = extractedValue.source.fieldLabel.toLowerCase().trim();
+        const fieldLabel = extractedValue.source.fieldLabel;
         
-        // Check if this field is a lot number field
-        if (lotNumberLabels.some(label => fieldLabel === label || fieldLabel.includes("lot no"))) {
+        // Check if this field is a lot number field (with OCR typo handling)
+        if (this.isLotNumberField(fieldLabel)) {
           const value = extractedValue.rawValue.trim().toUpperCase();
           if (value) {
             lotValuesFound.push({
