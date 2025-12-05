@@ -149,7 +149,77 @@ export class SignatureAnalyzer {
     'qa_approver', // QA approver can be final if no verifier/manager/released_by
   ];
 
+  // Keywords that indicate a page requires signature checking (case-insensitive)
+  private signatureRequiredKeywords = [
+    /recorded\s*by/i,
+    /verified\s*by/i,
+  ];
+
+  /**
+   * Check if the page contains keywords that indicate signatures should be checked.
+   * Only pages with "recorded by" or "verified by" (case-insensitive) require signature validation.
+   */
+  private pageRequiresSignatureCheck(data: ExtractedApprovalData): boolean {
+    // Collect all text from the page
+    const allText: string[] = [];
+
+    // From text blocks
+    if (data.textBlocks) {
+      for (const block of data.textBlocks) {
+        if (block.text) {
+          allText.push(block.text);
+        }
+      }
+    }
+
+    // From form fields (both field names and values)
+    if (data.formFields) {
+      for (const field of data.formFields) {
+        if (field.fieldName) {
+          allText.push(field.fieldName);
+        }
+        if (field.fieldValue) {
+          allText.push(field.fieldValue);
+        }
+      }
+    }
+
+    // Join all text for searching
+    const pageText = allText.join(' ');
+
+    // Check if any of the signature required keywords are present
+    for (const keyword of this.signatureRequiredKeywords) {
+      if (keyword.test(pageText)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Returns an empty approval analysis structure for pages that don't require signature checking.
+   */
+  private emptyApprovalAnalysis(): ApprovalAnalysis {
+    return {
+      signatures: [],
+      checkpoints: [],
+      approvalChain: [],
+      missingSignatures: [],
+      sequenceValid: true,
+      allDatesPresent: true,
+      allCheckboxesChecked: true,
+      finalApprovalRole: undefined,
+    };
+  }
+
   analyze(data: ExtractedApprovalData): ApprovalAnalysis {
+    // First check if this page contains keywords requiring signature validation
+    if (!this.pageRequiresSignatureCheck(data)) {
+      // Page doesn't have "recorded by" or "verified by" - skip signature analysis
+      return this.emptyApprovalAnalysis();
+    }
+
     // Detect all signatures with their roles
     const signatures = this.detectSignatures(data);
 
@@ -460,7 +530,7 @@ export class SignatureAnalyzer {
       }
 
       checkpoints.push({
-        role: finalApprovalRole,
+        role: finalApprovalRole!,
         signature: finalSignature,
         checkbox: associatedCheckbox,
         isComplete: finalSignature.hasDate && (!associatedCheckbox || associatedCheckbox.state === 'checked'),
