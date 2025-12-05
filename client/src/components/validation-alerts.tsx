@@ -95,7 +95,11 @@ export function ValidationAlerts({ documentId, onPageClick }: ValidationAlertsPr
   }
 
   const { summary, pageResults } = data;
-  const allAlerts = pageResults.flatMap(p => p.alerts);
+  // Combine page-level alerts with cross-page issues (batch/lot consistency, reconciliation, etc.)
+  const allAlerts = [
+    ...pageResults.flatMap(p => p.alerts),
+    ...(summary.crossPageIssues || [])
+  ];
 
   return (
     <Card>
