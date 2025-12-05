@@ -339,16 +339,17 @@ export class ValidationEngine {
   }
 
   private parseFormField(field: any, pageNumber: number, sectionType: string): ExtractedValue | null {
-    if (!field.fieldName || !field.fieldValue) return null;
-
-    const numericMatch = field.fieldValue.match(/[-+]?\d*\.?\d+/);
+    if (!field.fieldName) return null;
+    
+    const fieldValue = field.fieldValue || "";
+    const numericMatch = fieldValue.match(/[-+]?\d*\.?\d+/);
     const numericValue = numericMatch ? parseFloat(numericMatch[0]) : null;
-    const unit = this.extractUnit(field.fieldValue);
-    const valueType = this.determineValueType(field.fieldValue);
+    const unit = fieldValue ? this.extractUnit(fieldValue) : null;
+    const valueType = fieldValue ? this.determineValueType(fieldValue) : "text";
 
     return {
       id: this.generateValueId(),
-      rawValue: field.fieldValue,
+      rawValue: fieldValue,
       numericValue,
       unit,
       valueType,
