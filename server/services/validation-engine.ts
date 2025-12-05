@@ -912,6 +912,10 @@ export class ValidationEngine {
   private validateCrossPageConsistency(pageResults: PageValidationResult[]): ValidationAlert[] {
     const alerts: ValidationAlert[] = [];
 
+    // Check page completeness - verify all declared pages are present
+    const pageCompletenessAlerts = this.checkPageCompleteness(pageResults);
+    alerts.push(...pageCompletenessAlerts);
+
     // Check batch number consistency using parallel structured + raw text extraction
     const batchNumberAlerts = this.checkBatchNumberConsistency(pageResults);
     alerts.push(...batchNumberAlerts);
@@ -2006,6 +2010,259 @@ export class ValidationEngine {
     const alerts: ValidationAlert[] = [];
     
     return alerts;
+  }
+
+  /**
+   * Extract page pagination information from OCR text.
+   * Looks for patterns like "Page X of Y", "Page X/Y", "X of Y pages", etc.
+   * Handles OCR variations and common misspellings.
+   * 
+   * @param text - Raw OCR text from a page
+   * @returns Object with current page number and total pages, or null if not found
+   */
+  private extractPagePagination(text: string): { currentPage: number; totalPages: number } | null {
+    if (!text) return null;
+    
+    // Common OCR variations of "Page"
+    const pageWords = [
+      "page",
+      "poge",   // OCR: a→o
+      "paqe",   // OCR: g→q
+      "pa9e",   // OCR: g→9
+      "paye",   // OCR: g→y
+      "p age",  // OCR: space inserted
+    ];
+    
+    // Build patterns for each page word variant
+    for (const word of pageWords) {
+      // Pattern 1: "Page X of Y" - most common format
+      const pattern1 = new RegExp(`${word}\\s*(\\d+)\\s*(?:of|0f|oF|Of)\\s*(\\d+)`, 'i');
+      let match = pattern1.exec(text);
+      if (match) {
+        const current = parseInt(match[1], 10);
+        const total = parseInt(match[2], 10);
+        if (current > 0 && total > 0 && current <= total) {
+          return { currentPage: current, totalPages: total };
+        }
+      }
+      
+      // Pattern 2: "Page X/Y" - slash format
+      const pattern2 = new RegExp(`${word}\\s*(\\d+)\\s*/\\s*(\\d+)`, 'i');
+      match = pattern2.exec(text);
+      if (match) {
+        const current = parseInt(match[1], 10);
+        const total = parseInt(match[2], 10);
+        if (current > 0 && total > 0 && current <= total) {
+          return { currentPage: current, totalPages: total };
+        }
+      }
+    }
+    
+    // Pattern 3: "X of Y" without "Page" prefix (often in headers)
+    const standalonePattern = /\b(\d+)\s*(?:of|0f|oF|Of)\s*(\d+)\b/i;
+    const standaloneMatch = standalonePattern.exec(text);
+    if (standaloneMatch) {
+      const current = parseInt(standaloneMatch[1], 10);
+      const total = parseInt(standaloneMatch[2], 10);
+      // Only accept if numbers look like page numbers (reasonable range)
+      if (current > 0 && total > 0 && current <= total && total <= 500) {
+        return { currentPage: current, totalPages: total };
+      }
+    }
+    
+    return null;
+  }
+
+  /**
+   * Check document page completeness - verify all expected pages are present.
+   * Extracts "Page X of Y" from each page and identifies missing page numbers.
+   * 
+   * @param pageResults - Array of page validation results with OCR text
+   * @returns Array of alerts for missing pages
+   */
+  private checkPageCompleteness(pageResults: PageValidationResult[]): ValidationAlert[] {
+    const alerts: ValidationAlert[] = [];
+    
+    // Collect pagination info from all pages
+    const paginationData: Array<{
+      physicalIndex: number;
+      declaredPage: number;
+      declaredTotal: number;
+      source: SourceLocation;
+    }> = [];
+    
+    for (const page of pageResults) {
+      if (!page.extractedText) continue;
+      
+      const pagination = this.extractPagePagination(page.extractedText);
+      if (pagination) {
+        paginationData.push({
+          physicalIndex: page.pageNumber,
+          declaredPage: pagination.currentPage,
+          declaredTotal: pagination.totalPages,
+          source: {
+            pageNumber: page.pageNumber,
+            sectionType: "header",
+            fieldLabel: `Page ${pagination.currentPage} of ${pagination.totalPages}`,
+            boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+            surroundingContext: `Pagination found in page header`
+          }
+        });
+      }
+    }
+    
+    // If no pagination found on any page, skip this check
+    if (paginationData.length === 0) {
+      return alerts;
+    }
+    
+    // Determine the expected total (use majority voting if inconsistent)
+    const totalCounts = new Map<number, number>();
+    for (const item of paginationData) {
+      totalCounts.set(item.declaredTotal, (totalCounts.get(item.declaredTotal) || 0) + 1);
+    }
+    
+    // Find the most common declared total
+    let expectedTotal = 0;
+    let maxCount = 0;
+    totalCounts.forEach((count, total) => {
+      if (count > maxCount) {
+        maxCount = count;
+        expectedTotal = total;
+      }
+    });
+    
+    if (expectedTotal === 0) {
+      return alerts;
+    }
+    
+    // Build set of declared page numbers found
+    const foundPages = new Set<number>();
+    for (const item of paginationData) {
+      foundPages.add(item.declaredPage);
+    }
+    
+    // Find missing pages in the 1 to expectedTotal range
+    const missingPages: number[] = [];
+    for (let i = 1; i <= expectedTotal; i++) {
+      if (!foundPages.has(i)) {
+        missingPages.push(i);
+      }
+    }
+    
+    // Generate alert if pages are missing
+    if (missingPages.length > 0) {
+      // Format missing pages nicely (e.g., "1, 3, 5-10, 45")
+      const formattedMissing = this.formatPageRanges(missingPages);
+      
+      alerts.push({
+        id: this.generateAlertId(),
+        category: "missing_value",
+        severity: missingPages.length > 5 ? "critical" : "high",
+        title: "Missing Pages Detected",
+        message: `Document declares ${expectedTotal} total pages but ${missingPages.length} page(s) are missing`,
+        details: `Missing pages: ${formattedMissing}. Found ${foundPages.size} of ${expectedTotal} expected pages.`,
+        source: {
+          pageNumber: 1,
+          sectionType: "document",
+          fieldLabel: "Page Completeness",
+          boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+          surroundingContext: `Document pagination indicates ${expectedTotal} total pages`
+        },
+        relatedValues: [],
+        suggestedAction: "Verify if pages are missing from the scanned document. Re-scan or obtain the complete document.",
+        ruleId: null,
+        formulaId: null,
+        isResolved: false,
+        resolvedBy: null,
+        resolvedAt: null,
+        resolution: null
+      });
+    }
+    
+    // Also check for duplicate page numbers (same declared page on multiple physical pages)
+    const pageOccurrences = new Map<number, number[]>();
+    for (const item of paginationData) {
+      if (!pageOccurrences.has(item.declaredPage)) {
+        pageOccurrences.set(item.declaredPage, []);
+      }
+      pageOccurrences.get(item.declaredPage)!.push(item.physicalIndex);
+    }
+    
+    pageOccurrences.forEach((physicalPages, declaredPage) => {
+      if (physicalPages.length > 1) {
+        alerts.push({
+          id: this.generateAlertId(),
+          category: "consistency_error",
+          severity: "medium",
+          title: "Duplicate Page Number",
+          message: `Page ${declaredPage} appears ${physicalPages.length} times in the document`,
+          details: `Page ${declaredPage} was found on physical pages: ${physicalPages.join(", ")}. This may indicate a scanning error or duplicate pages.`,
+          source: {
+            pageNumber: physicalPages[0],
+            sectionType: "header",
+            fieldLabel: `Page ${declaredPage}`,
+            boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+            surroundingContext: `Duplicate page number detected`
+          },
+          relatedValues: [],
+          suggestedAction: "Review the duplicate pages to determine if they are identical copies or different pages with incorrect numbering.",
+          ruleId: null,
+          formulaId: null,
+          isResolved: false,
+          resolvedBy: null,
+          resolvedAt: null,
+          resolution: null
+        });
+      }
+    });
+    
+    return alerts;
+  }
+
+  /**
+   * Format an array of page numbers into readable ranges.
+   * E.g., [1, 2, 3, 5, 7, 8, 9, 15] becomes "1-3, 5, 7-9, 15"
+   */
+  private formatPageRanges(pages: number[]): string {
+    if (pages.length === 0) return "";
+    
+    const sorted = [...pages].sort((a, b) => a - b);
+    const ranges: string[] = [];
+    let rangeStart = sorted[0];
+    let rangeEnd = sorted[0];
+    
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i] === rangeEnd + 1) {
+        // Extend current range
+        rangeEnd = sorted[i];
+      } else {
+        // Close current range and start new one
+        if (rangeStart === rangeEnd) {
+          ranges.push(String(rangeStart));
+        } else if (rangeEnd === rangeStart + 1) {
+          // Just two consecutive numbers, list them
+          ranges.push(String(rangeStart));
+          ranges.push(String(rangeEnd));
+        } else {
+          ranges.push(`${rangeStart}-${rangeEnd}`);
+        }
+        rangeStart = sorted[i];
+        rangeEnd = sorted[i];
+      }
+    }
+    
+    // Close the final range
+    if (rangeStart === rangeEnd) {
+      ranges.push(String(rangeStart));
+    } else if (rangeEnd === rangeStart + 1) {
+      ranges.push(String(rangeStart));
+      ranges.push(String(rangeEnd));
+    } else {
+      ranges.push(`${rangeStart}-${rangeEnd}`);
+    }
+    
+    return ranges.join(", ");
   }
 
   getSOPRules(): SOPRule[] {
