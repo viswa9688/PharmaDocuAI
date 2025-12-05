@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { 
   AlertTriangle, 
   AlertCircle, 
@@ -16,7 +17,8 @@ import {
   Activity,
   Clock,
   ArrowRight,
-  ChevronRight
+  ChevronRight,
+  FileX2
 } from "lucide-react";
 import type { 
   ValidationAlert, 
@@ -51,6 +53,52 @@ const categoryConfig: Record<AlertCategory, { icon: typeof Calculator; label: st
   sop_violation: { icon: AlertTriangle, label: "SOP Violation" },
   data_quality: { icon: AlertCircle, label: "Data Quality" }
 };
+
+interface MissingPagesData {
+  missingPages: string;
+  foundCount: number;
+  expectedCount: number;
+  missingCount: number;
+}
+
+function MissingPagesBanner({ alert }: { alert: ValidationAlert }) {
+  let data: MissingPagesData | null = null;
+  
+  try {
+    if (alert.details) {
+      data = JSON.parse(alert.details) as MissingPagesData;
+    }
+  } catch {
+    data = null;
+  }
+  
+  const missingPages = data?.missingPages || "Unable to determine";
+  const foundCount = data?.foundCount ?? "?";
+  const expectedCount = data?.expectedCount ?? "?";
+  
+  return (
+    <Alert variant="destructive" className="mb-6" data-testid="banner-missing-pages">
+      <FileX2 className="h-5 w-5" />
+      <AlertTitle className="text-lg font-semibold flex items-center gap-2">
+        Missing Pages Detected
+      </AlertTitle>
+      <AlertDescription className="mt-2">
+        <p className="text-sm mb-3">
+          This document is incomplete. Only <strong>{foundCount}</strong> of <strong>{expectedCount}</strong> expected pages were found.
+        </p>
+        <div className="p-3 bg-background/50 rounded border border-destructive/30">
+          <div className="text-sm font-medium mb-1 text-foreground">Missing Pages:</div>
+          <div className="text-base font-mono font-bold" data-testid="text-missing-pages-list">
+            {missingPages}
+          </div>
+        </div>
+        <p className="text-xs mt-3 opacity-80">
+          {alert.suggestedAction}
+        </p>
+      </AlertDescription>
+    </Alert>
+  );
+}
 
 export function ValidationAlerts({ documentId, onPageClick }: ValidationAlertsProps) {
   const { data, isLoading, error } = useQuery<{
@@ -101,6 +149,11 @@ export function ValidationAlerts({ documentId, onPageClick }: ValidationAlertsPr
     ...(summary.crossPageIssues || [])
   ];
 
+  // Extract missing pages alert for prominent display using stable ruleId
+  const missingPagesAlert = allAlerts.find(a => a.ruleId === "page_completeness_missing");
+  // Filter out the missing pages alert from regular display (it will be shown in banner)
+  const filteredAlerts = allAlerts.filter(a => a.ruleId !== "page_completeness_missing");
+
   return (
     <Card>
       <CardHeader>
@@ -115,6 +168,11 @@ export function ValidationAlerts({ documentId, onPageClick }: ValidationAlertsPr
         </CardDescription>
       </CardHeader>
       <CardContent>
+        {/* Prominent Missing Pages Banner */}
+        {missingPagesAlert && (
+          <MissingPagesBanner alert={missingPagesAlert} />
+        )}
+
         {/* Summary Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <div className="text-center p-3 bg-muted rounded-lg" data-testid="stat-critical-alerts">
@@ -171,7 +229,7 @@ export function ValidationAlerts({ documentId, onPageClick }: ValidationAlertsPr
             <TabsContent value="all" className="mt-4">
               <ScrollArea className="h-[400px]">
                 <AlertList 
-                  alerts={allAlerts} 
+                  alerts={filteredAlerts} 
                   onPageClick={onPageClick}
                 />
               </ScrollArea>
@@ -180,7 +238,7 @@ export function ValidationAlerts({ documentId, onPageClick }: ValidationAlertsPr
             <TabsContent value="calculations" className="mt-4">
               <ScrollArea className="h-[400px]">
                 <AlertList 
-                  alerts={allAlerts.filter(a => a.category === 'calculation_error')} 
+                  alerts={filteredAlerts.filter(a => a.category === 'calculation_error')} 
                   onPageClick={onPageClick}
                 />
               </ScrollArea>
@@ -189,7 +247,7 @@ export function ValidationAlerts({ documentId, onPageClick }: ValidationAlertsPr
             <TabsContent value="missing" className="mt-4">
               <ScrollArea className="h-[400px]">
                 <AlertList 
-                  alerts={allAlerts.filter(a => a.category === 'missing_value')} 
+                  alerts={filteredAlerts.filter(a => a.category === 'missing_value')} 
                   onPageClick={onPageClick}
                 />
               </ScrollArea>
@@ -198,7 +256,7 @@ export function ValidationAlerts({ documentId, onPageClick }: ValidationAlertsPr
             <TabsContent value="violations" className="mt-4">
               <ScrollArea className="h-[400px]">
                 <AlertList 
-                  alerts={allAlerts.filter(a => 
+                  alerts={filteredAlerts.filter(a => 
                     a.category === 'range_violation' || a.category === 'sop_violation'
                   )} 
                   onPageClick={onPageClick}

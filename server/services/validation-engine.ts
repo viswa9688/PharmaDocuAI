@@ -2161,7 +2161,12 @@ export class ValidationEngine {
         severity: missingPages.length > 5 ? "critical" : "high",
         title: "Missing Pages Detected",
         message: `Document declares ${expectedTotal} total pages but ${missingPages.length} page(s) are missing`,
-        details: `Missing pages: ${formattedMissing}. Found ${foundPages.size} of ${expectedTotal} expected pages.`,
+        details: JSON.stringify({
+          missingPages: formattedMissing,
+          foundCount: foundPages.size,
+          expectedCount: expectedTotal,
+          missingCount: missingPages.length
+        }),
         source: {
           pageNumber: 1,
           sectionType: "document",
@@ -2171,7 +2176,7 @@ export class ValidationEngine {
         },
         relatedValues: [],
         suggestedAction: "Verify if pages are missing from the scanned document. Re-scan or obtain the complete document.",
-        ruleId: null,
+        ruleId: "page_completeness_missing",
         formulaId: null,
         isResolved: false,
         resolvedBy: null,
