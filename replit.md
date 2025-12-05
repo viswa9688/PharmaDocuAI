@@ -40,6 +40,13 @@ The system is built on a React, Express, PostgreSQL, and TypeScript stack.
       - "high": Both sources (structured + text) found AND agree for BOTH commencement and completion
       - "medium": Only one source available, OR sources disagree
       - "low": No dates found at all
+    - **Visual Analyzer (Data Integrity Detection)**: Computer vision-based detection of strike-offs, red ink corrections, overwrites, erasures, and other visual anomalies that impact GMP compliance. Uses sharp and canvas libraries for:
+      - **Line Detection**: Identifies horizontal/diagonal strike-through lines crossing text regions
+      - **Color Masking**: Detects red ink marks and annotations using HSV color space analysis
+      - **Erasure Detection**: Identifies whitened areas or signs of correction fluid
+      - **Text Region Intersection**: Maps visual anomalies to affected text by intersecting with OCR bounding boxes
+      - **Thumbnail Generation**: Creates cropped thumbnails of detected anomalies for visual review
+      - Anomalies are stored in page metadata and converted to "data_integrity" category ValidationAlerts
     - **Metadata Storage**: Rich extraction and layout data are stored in PostgreSQL using JSONB fields. Batch date bounds are stored at document level.
 
 ### System Design Choices
