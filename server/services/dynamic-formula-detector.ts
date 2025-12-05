@@ -182,6 +182,20 @@ export class DynamicFormulaDetector {
         
         console.log(`[DynamicFormulaDetector] Row ${rowIdx} variables:`, rowVariables.map(v => `${v.name}=${v.value}`));
 
+        // Skip rows with unreasonable values that indicate header row misread
+        // LOD should typically be 0-20%, if it's 100 it's likely from "(100-LOD)" in header
+        const lodMapping = rowVariables.find(v => v.name === "LOD");
+        if (lodMapping && (lodMapping.value === 100 || lodMapping.value > 50)) {
+          console.log(`[DynamicFormulaDetector] Skipping row ${rowIdx}: LOD value ${lodMapping.value} appears to be from header text`);
+          continue;
+        }
+
+        // Skip if no valid numeric values found
+        if (rowVariables.length === 0) {
+          console.log(`[DynamicFormulaDetector] Skipping row ${rowIdx}: no valid variable mappings`);
+          continue;
+        }
+
         const evaluationResult = this.evaluateFormula(
           parsedFormula,
           rowVariables
@@ -392,6 +406,13 @@ export class DynamicFormulaDetector {
     
     // Step 5: Remove remaining spaces (for mathjs)
     normalized = normalized.replace(/\s+/g, "");
+
+    // Step 6: Handle truncated formulas - if formula has (100-LOD)*Variable but no /100, add it
+    // This is common in pharmaceutical calculations where result is a percentage
+    if (/\(100-LOD\)\*[A-Za-z_]+$/i.test(normalized) && !/\/100/.test(normalized)) {
+      normalized = `(${normalized})/100`;
+      console.log(`[DynamicFormulaDetector] Added /100 to truncated formula`);
+    }
 
     console.log(`[DynamicFormulaDetector] Normalized expression: "${expression}" -> "${normalized}"`);
     return normalized;
