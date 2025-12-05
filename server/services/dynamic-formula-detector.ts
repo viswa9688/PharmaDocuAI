@@ -409,7 +409,8 @@ export class DynamicFormulaDetector {
 
     // Step 6: Handle truncated formulas - if formula has (100-LOD)*Variable but no /100, add it
     // This is common in pharmaceutical calculations where result is a percentage
-    if (/\(100-LOD\)\*[A-Za-z_]+$/i.test(normalized) && !/\/100/.test(normalized)) {
+    // Pattern handles both single and double parentheses: (100-LOD)*Var or ((100-LOD))*Var
+    if (/\(*\(100-LOD\)\)*\*[A-Za-z_]+$/i.test(normalized) && !/\/100/.test(normalized)) {
       normalized = `(${normalized})/100`;
       console.log(`[DynamicFormulaDetector] Added /100 to truncated formula`);
     }
