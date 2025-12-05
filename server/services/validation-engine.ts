@@ -244,7 +244,8 @@ export class ValidationEngine {
       extractedValues,
       detectedFormulas,
       alerts,
-      validationTimestamp: new Date()
+      validationTimestamp: new Date(),
+      extractedText
     };
   }
 
@@ -978,20 +979,94 @@ export class ValidationEngine {
   }
 
   /**
-   * Check if all pages have the same batch number using form fields data.
+   * Scan raw text for batch number patterns and extract value if present.
+   * Handles OCR typos like "Butch No.:" and returns the value (or empty if label found but no value).
+   * Iterates through ALL label matches on the page and returns the first valid value found.
+   * If labels exist but all have empty values, returns { label, value: "" } to trigger missing alert.
+   */
+  private scanTextForBatchNumber(text: string, pageNumber: number): { label: string; value: string } | null {
+    if (!text) return null;
+    
+    // OCR variants of "batch"
+    const batchWords = ["batch", "butch", "betch", "botch", "balch", "bateh", "barch", "8atch", "ba1ch"];
+    
+    let firstLabelFound: string | null = null;
+    
+    for (const word of batchWords) {
+      // Find all batch label patterns in the text
+      const labelPatterns = [
+        new RegExp(`(${word}\\s*no\\.?)\\s*:?`, 'gi'),
+        new RegExp(`(${word}\\s*number)\\s*:?`, 'gi'),
+        new RegExp(`(${word}\\s*#)\\s*:?`, 'gi'),
+      ];
+      
+      for (const labelPattern of labelPatterns) {
+        let match;
+        // Reset lastIndex for each pattern
+        labelPattern.lastIndex = 0;
+        
+        while ((match = labelPattern.exec(text)) !== null) {
+          const label = match[1].trim();
+          if (!firstLabelFound) firstLabelFound = label;
+          
+          const afterLabel = text.substring(match.index + match[0].length);
+          
+          // Check same line and next line for value
+          const lines = afterLabel.split('\n');
+          const linesToCheck = [lines[0], lines[1] || ""].join(" ").trim();
+          
+          // Get whitespace-separated tokens
+          const tokens = linesToCheck.split(/\s+/);
+          
+          for (const rawToken of tokens) {
+            if (!rawToken) continue;
+            
+            // Strip leading/trailing punctuation that OCR often appends
+            const token = rawToken.replace(/^[,;:.\s]+|[,;:.\s]+$/g, '');
+            if (!token) continue;
+            
+            // Stop if we hit another field label
+            if (/^(lot|lat|lct|1ot|l0t|effective|date|revision|page|document|expiry|copy|sign)/i.test(token)) {
+              break;
+            }
+            
+            // A valid batch number contains at least one digit and is alphanumeric
+            if (/\d/.test(token) && /^[A-Za-z0-9\-\/]+$/.test(token)) {
+              return { label, value: token };
+            }
+          }
+        }
+      }
+    }
+    
+    // If we found at least one label but no valid value, return empty value
+    // This will trigger "Batch Number Missing" alert
+    if (firstLabelFound) {
+      return { label: firstLabelFound, value: "" };
+    }
+    
+    return null;
+  }
+
+  /**
+   * Check if all pages have the same batch number using form fields data AND raw text scanning.
    * Looks for fields labeled "Batch No", "Batch No.", "Batch Number", etc.
    * Also handles OCR typos like "Butch No." and detects missing batch numbers.
    */
   private checkBatchNumberConsistency(pageResults: PageValidationResult[]): ValidationAlert | null {
     const batchValuesFound: Array<{ value: string; pageNumber: number; source: SourceLocation }> = [];
-    const emptyBatchFields: Array<{ pageNumber: number; source: SourceLocation }> = [];
+    const emptyBatchFields: Array<{ pageNumber: number; source: SourceLocation; label: string }> = [];
 
     for (const page of pageResults) {
+      let foundBatchOnPage = false;
+      
+      // First, check structured form fields
       for (const extractedValue of page.extractedValues) {
         const fieldLabel = extractedValue.source.fieldLabel;
         
         // Check if this field is a batch number field (with OCR typo handling)
         if (this.isBatchNumberField(fieldLabel)) {
+          foundBatchOnPage = true;
           const value = extractedValue.rawValue.trim().toUpperCase();
           if (value) {
             batchValuesFound.push({
@@ -1003,7 +1078,37 @@ export class ValidationEngine {
             // Track batch number fields with empty values
             emptyBatchFields.push({
               pageNumber: extractedValue.source.pageNumber,
-              source: extractedValue.source
+              source: extractedValue.source,
+              label: fieldLabel
+            });
+          }
+        }
+      }
+      
+      // If no batch field found in form fields, scan raw text
+      if (!foundBatchOnPage && page.extractedText) {
+        const textResult = this.scanTextForBatchNumber(page.extractedText, page.pageNumber);
+        if (textResult) {
+          const defaultSource: SourceLocation = {
+            pageNumber: page.pageNumber,
+            sectionType: "",
+            fieldLabel: textResult.label,
+            boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+            surroundingContext: `Found in raw text: "${textResult.label}"`
+          };
+          
+          if (textResult.value) {
+            batchValuesFound.push({
+              value: textResult.value.toUpperCase(),
+              pageNumber: page.pageNumber,
+              source: defaultSource
+            });
+          } else {
+            // Batch label found in text but no value
+            emptyBatchFields.push({
+              pageNumber: page.pageNumber,
+              source: defaultSource,
+              label: textResult.label
             });
           }
         }
@@ -1131,15 +1236,90 @@ export class ValidationEngine {
     return false;
   }
 
+  /**
+   * Scan raw text for lot number patterns and extract value if present.
+   * Handles OCR typos like "Lat No.:" and returns the value (or empty if label found but no value).
+   * Iterates through ALL label matches on the page and returns the first valid value found.
+   * If labels exist but all have empty values, returns { label, value: "" } to trigger missing alert.
+   */
+  private scanTextForLotNumber(text: string, pageNumber: number): { label: string; value: string } | null {
+    if (!text) return null;
+    
+    // OCR variants of "lot"
+    const lotWords = ["lot", "lat", "lct", "1ot", "l0t", "lo1"];
+    
+    let firstLabelFound: string | null = null;
+    
+    for (const word of lotWords) {
+      // Find all lot label patterns in the text
+      const labelPatterns = [
+        new RegExp(`(${word}\\s*no\\.?)\\s*:?`, 'gi'),
+        new RegExp(`(${word}\\s*number)\\s*:?`, 'gi'),
+        new RegExp(`(${word}\\s*#)\\s*:?`, 'gi'),
+      ];
+      
+      for (const labelPattern of labelPatterns) {
+        let match;
+        // Reset lastIndex for each pattern
+        labelPattern.lastIndex = 0;
+        
+        while ((match = labelPattern.exec(text)) !== null) {
+          const label = match[1].trim();
+          if (!firstLabelFound) firstLabelFound = label;
+          
+          const afterLabel = text.substring(match.index + match[0].length);
+          
+          // Check same line and next line for value
+          const lines = afterLabel.split('\n');
+          const linesToCheck = [lines[0], lines[1] || ""].join(" ").trim();
+          
+          // Get whitespace-separated tokens
+          const tokens = linesToCheck.split(/\s+/);
+          
+          for (const rawToken of tokens) {
+            if (!rawToken) continue;
+            
+            // Strip leading/trailing punctuation that OCR often appends
+            const token = rawToken.replace(/^[,;:.\s]+|[,;:.\s]+$/g, '');
+            if (!token) continue;
+            
+            // Stop if we hit another field label
+            if (/^(batch|butch|betch|effective|date|revision|page|document|expiry|copy|sign)/i.test(token)) {
+              break;
+            }
+            
+            // A valid lot number contains at least one digit and is alphanumeric
+            if (/\d/.test(token) && /^[A-Za-z0-9\-\/]+$/.test(token)) {
+              return { label, value: token };
+            }
+          }
+        }
+      }
+    }
+    
+    // If we found at least one label but no valid value, return empty value
+    // This will trigger "Lot Number Missing" alert
+    if (firstLabelFound) {
+      return { label: firstLabelFound, value: "" };
+    }
+    
+    return null;
+  }
+
   private checkLotNumberConsistency(pageResults: PageValidationResult[]): ValidationAlert | null {
     const lotValuesFound: Array<{ value: string; pageNumber: number; source: SourceLocation }> = [];
+    const emptyLotFields: Array<{ pageNumber: number; source: SourceLocation; label: string }> = [];
 
     for (const page of pageResults) {
+      let foundLotOnPage = false;
+      
+      // First, check structured form fields
       for (const extractedValue of page.extractedValues) {
         const fieldLabel = extractedValue.source.fieldLabel;
         
         // Check if this field is a lot number field (with OCR typo handling)
         if (this.isLotNumberField(fieldLabel)) {
+          foundLotOnPage = true;
           const value = extractedValue.rawValue.trim().toUpperCase();
           if (value) {
             lotValuesFound.push({
@@ -1147,9 +1327,65 @@ export class ValidationEngine {
               pageNumber: extractedValue.source.pageNumber,
               source: extractedValue.source
             });
+          } else {
+            emptyLotFields.push({
+              pageNumber: extractedValue.source.pageNumber,
+              source: extractedValue.source,
+              label: fieldLabel
+            });
           }
         }
       }
+      
+      // If no lot field found in form fields, scan raw text
+      if (!foundLotOnPage && page.extractedText) {
+        const textResult = this.scanTextForLotNumber(page.extractedText, page.pageNumber);
+        if (textResult) {
+          const defaultSource: SourceLocation = {
+            pageNumber: page.pageNumber,
+            sectionType: "",
+            fieldLabel: textResult.label,
+            boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+            surroundingContext: `Found in raw text: "${textResult.label}"`
+          };
+          
+          if (textResult.value) {
+            lotValuesFound.push({
+              value: textResult.value.toUpperCase(),
+              pageNumber: page.pageNumber,
+              source: defaultSource
+            });
+          } else {
+            emptyLotFields.push({
+              pageNumber: page.pageNumber,
+              source: defaultSource,
+              label: textResult.label
+            });
+          }
+        }
+      }
+    }
+
+    // If lot number fields are found but all are empty, generate missing value alert
+    if (lotValuesFound.length === 0 && emptyLotFields.length > 0) {
+      const pagesWithEmptyLot = Array.from(new Set(emptyLotFields.map(f => f.pageNumber)));
+      return {
+        id: this.generateAlertId(),
+        category: "missing_value",
+        severity: "high",
+        title: "Lot Number Missing",
+        message: `Lot number field is present but empty. This field is important for traceability.`,
+        details: `Empty lot number found on page(s): ${pagesWithEmptyLot.join(", ")}`,
+        source: emptyLotFields[0].source,
+        relatedValues: [],
+        suggestedAction: "Enter the lot number for proper material tracking.",
+        ruleId: null,
+        formulaId: null,
+        isResolved: false,
+        resolvedBy: null,
+        resolvedAt: null,
+        resolution: null
+      };
     }
 
     // If no lot numbers found, nothing to validate

@@ -1,176 +1,50 @@
 # Batch Record Processing System
 
 ## Overview
-AI-powered system to process scanned batch record PDFs, automatically classify pages, detect quality issues, and organize documents. Built with Google Document AI integration and OpenAI-powered classification.
+This AI-powered system processes scanned batch record PDFs, automates page classification, detects quality issues, and organizes documents. It integrates Google Document AI for advanced OCR and OpenAI for classification, aiming to streamline pharmaceutical batch record management by ensuring compliance and data integrity. The system offers a professional UI for document upload, viewing, and issue tracking, with a vision to enhance efficiency and accuracy in regulated environments.
 
-## Current State
-**Status**: MVP implementation complete, ready for credentials and testing
+## User Preferences
+I prefer detailed explanations.
+I want iterative development.
+Ask before making major changes.
+Do not make changes to the folder `Z`.
+Do not make changes to the file `Y`.
 
-### Completed Features
-1. **Complete Database Schema** - PostgreSQL with documents, pages, and qualityIssues tables
-2. **Frontend UI** - Professional Material Design 3 interface with:
-   - Upload page with drag-and-drop
-   - Document list view with status tracking
-   - Document viewer with page grid and detail panel
-   - **Side-by-side viewer** - View original scanned page images alongside extracted data
-   - **Structured data display** - Tables, form fields, checkboxes, handwriting annotations, signatures
-   - **Page structure viewer** - Displays recognized sections with field mapping and content organization
-   - **Approval timeline** - Visual signature flow, approval checkpoints, missing signature warnings
-   - Quality issue alerts and classification badges
-   - Sidebar navigation
-3. **Backend Services**:
-   - **Google Document AI Form Parser** - Comprehensive OCR with structure recognition
-   - **High-accuracy extraction module** - Extracts tables, form fields, checkboxes, handwritten text, signatures with positional data
-   - **Layout Analyzer** - Identifies page structure, detects sections, groups elements spatially, and maps to predefined fields
-   - **Signature Analyzer** - Detects signatures, tracks approval chains, validates compliance, links dates and checkboxes
-   - OpenAI-powered page classification with rule-based fallback
-   - PDF processing with page extraction and image generation
-   - **Page image extraction** - Converts each PDF page to PNG (scale: 2) using pdf-to-img
-   - Complete REST API for upload, processing, retrieval, export
-   - **Secure image serving** - Hardened path validation preventing directory traversal
-   - **Rich metadata storage** - Extraction and layout data stored in JSONB with organized sections
-4. **Database Layer** - Full PostgreSQL integration with Drizzle ORM
+## System Architecture
+The system is built on a React, Express, PostgreSQL, and TypeScript stack.
 
-### Architecture
-- **Stack**: React + Express + PostgreSQL + TypeScript
-- **Frontend**: Vite, TanStack Query, shadcn/ui, Tailwind CSS
-- **Backend**: Express, Drizzle ORM, Google Document AI, OpenAI
-- **Storage**: PostgreSQL for all document processing history
+### UI/UX Decisions
+- **Frontend**: Utilizes Vite, TanStack Query, shadcn/ui, and Tailwind CSS for a modern and responsive user experience.
+- **Design**: Adheres to Material Design 3 guidelines, featuring a professional enterprise color palette, Inter font family, and meticulous attention to spacing and typography for clarity and usability.
+- **Key UI Components**:
+    - **Upload Page**: Supports drag-and-drop functionality for document ingestion.
+    - **Document List View**: Displays documents with status tracking.
+    - **Document Viewer**: Features a side-by-side view of original scans and extracted data, structured data display (tables, form fields, checkboxes, handwriting, signatures), page structure viewer, and an approval timeline.
+    - **Alerts**: Quality issue alerts and classification badges are prominently displayed.
 
-## Required Credentials (Not Yet Provided)
-The application requires these environment variables:
-- `GOOGLE_CLOUD_PROJECT_ID` - GCP project ID
-- `GOOGLE_CLOUD_LOCATION` - GCP region (e.g., us-east1)
-- `GOOGLE_DOCUMENT_AI_PROCESSOR_ID` - Document AI processor ID
-- `GOOGLE_APPLICATION_CREDENTIALS_JSON` - GCP service account credentials (JSON)
-- `OPENAI_API_KEY` - OpenAI API key for classification
+### Technical Implementations
+- **Core Processing**:
+    - **Google Document AI Form Parser**: Provides comprehensive OCR and document structure recognition.
+    - **High-Accuracy Extraction Module**: Extracts tables, form fields, checkboxes, handwritten text, and signatures with precise positional data.
+    - **Layout Analyzer**: Identifies page structures, groups elements spatially, and maps them to predefined fields, recognizing section types like `materials_log`, `equipment_log`, etc.
+    - **Signature Analyzer**: Detects signatures, tracks approval chains against a canonical checkpoint template, validates compliance, and links signatures to dates and checkboxes. It supports table-based signature detection and handles various signature roles.
+    - **Validation Engine**: A comprehensive system for pharmaceutical batch record compliance, including value extraction, formula detection with a library of calculations, SOP rules engine (JSON-configurable for thresholds, hold times, pH ranges), cross-page validation for consistency, and human-readable alerts.
+    - **OpenAI-powered Classification**: Used for page classification, with a rule-based fallback mechanism.
+    - **PDF Processing**: Extracts pages and generates high-resolution PNG images (scale: 2) for viewing.
+    - **Secure Image Serving**: Implements hardened path validation to prevent directory traversal vulnerabilities.
+    - **Raw Text Scanning**: Enhanced detection of batch/lot numbers from raw OCR text, handling typos, multi-line layouts, and generating alerts for missing values.
+    - **Metadata Storage**: Rich extraction and layout data are stored in PostgreSQL using JSONB fields.
 
-Without these credentials:
-- Document AI OCR falls back to stub processing
-- Classification uses rule-based fallback instead of AI
+### System Design Choices
+- **Backend**: Implemented with Express, integrating Drizzle ORM for database interactions.
+- **Database**: PostgreSQL is used for all persistent storage of document processing history, including document metadata, page data, and quality issues.
+- **Modularity**: Services are clearly separated (Document AI, classifier, PDF processor, layout analyzer, signature analyzer) for maintainability and scalability.
+- **Error Handling**: Comprehensive error handling and graceful fallbacks are integrated throughout the pipeline, particularly for compliance validation.
 
-## Recent Changes
-**December 05, 2025** (Session 7):
-- **OCR Typo Handling for Batch/Lot Numbers**: Added fuzzy matching to detect batch and lot number fields even when OCR misreads them:
-  - Handles common OCR errors: "Butch No." → "Batch No.", "Betch No." → "Batch No.", etc.
-  - Supports 9 batch word typos (butch, betch, botch, balch, bateh, barch, 8atch, ba1ch) and 5 lot word typos
-  - Recognizes composite labels like "Batch No./Date", "Lot No (COA)", "Batch No & Expiry"
-  - Rejects false positives like "Batch Notes", "Batch No Verified" using strict regex patterns
-  - Enables cross-page batch number consistency checks to work with OCR-degraded documents
-- **Missing Batch Number Validation**: Fixed validation to detect empty batch number fields:
-  - Previously only checked for mismatched batch numbers across pages
-  - Now tracks batch number fields with empty values and generates "Batch Number Missing" alert with critical severity
-  - Alert includes page numbers where empty batch fields were found
-- **Table-Based Signature Detection**: Extended signature analyzer to detect signatures in table cells:
-  - Added table column header pattern matching for "Recorded By", "Verified By", "Sign", "Initial" columns
-  - Uses `isHeader` flag to distinguish header cells from data cells
-  - Non-empty cells in signature columns are treated as signatures
-  - Date association looks for dates in the same row
-  - Role mapping: "Recorded By" → performed_by, "Verified By" → verifier
-  - Keyword check updated to also search table column headers for signature-required pages
-
-**December 04, 2025** (Session 6):
-- **Comprehensive Validation Engine**: Implemented full validation system for pharmaceutical batch record compliance:
-  - **Value Extraction Module**: Parses and normalizes all numeric values from form fields, tables, handwritten text, and raw text patterns with source location tracking (page number, section type, field label, bounding box, context)
-  - **Formula Detection**: Pattern recognition for yield %, material reconciliation, hold time, temperature averages, pressure differentials with operand extraction and recalculation
-  - **Formula Library**: Calculation functions with unit-aware comparison and configurable tolerance logic
-  - **SOP Rules Engine**: JSON-configurable validation rules for temperature thresholds (2-8°C storage, 65°C CIP, 121°C SIP), hold times (max 24hr), pH ranges (6.0-8.0), pressure limits, required fields
-  - **Cross-Page Validation**: Detects inconsistent batch/lot numbers and timestamp ordering issues
-  - **Human-Readable Alerts**: Categorized alerts (calculation_error, missing_value, range_violation, sequence_error, etc.) with severity levels, suggested actions, and source references
-  - **API Endpoints**: `/api/documents/:id/validation` for document-level validation, `/api/documents/:docId/pages/:pageNumber/validation` for page-level, `/api/validation/rules` for SOP rules management
-  - **UI Components**: ValidationAlerts component with tabbed view (All, Calculations, Missing, Violations), click-to-navigate to source pages, summary statistics
-
-**November 25, 2025** (Session 5):
-- **Fixed Document Persistence Bug**: Switched from in-memory MemStorage to PostgreSQL DBStorage in server/routes.ts
-  - Documents now persist across page refreshes and server restarts
-  - All CRUD operations (documents, pages, quality issues) flow through Drizzle ORM to PostgreSQL
-  - DATABASE_URL environment variable used for connection
-
-**November 25, 2025** (Session 4):
-- **Signature & Approval Tracking Module** (Architect-approved, production-ready): Implemented comprehensive SignatureAnalyzer service with canonical checkpoint-based validation for pharmaceutical batch record compliance:
-  - **Canonical Checkpoint Template**: Validates against required sequence (operator → reviewer → qa_reviewer → qa_approver → final_approval) with flexible final role acceptance (verifier/manager/released_by)
-  - **Signature Detection**: Pattern-matching identifies 11 signature roles from field labels with proximity-based association to handwritten regions (200px threshold)
-  - **Date Association**: Links each signature to adjacent date/timestamp within 150px spatial proximity using multiple date format patterns
-  - **Approval Chain Tracking**: Builds canonical checkpoints for ALL required signatures (matched or missing), validates sequence integrity, detects regressions (out-of-order signatures)
-  - **Checkbox Integration**: Associates checkboxes with approval checkpoints using proximity matching (100px), validates only approval-related checkboxes (not all page checkboxes)
-  - **Missing Signature Detection**: Creates explicit checkpoints for missing required roles with clear error messages
-  - **Final Approval Role Tracking**: Identifies which specific role (verifier/manager/released_by/qa_approver) satisfied final approval requirement
-  - **Sequence Validation**: Detects all ordering violations including duplicates appearing out of canonical order
-  - **Validation API**: REST endpoint validates complete compliance (signature presence, canonical order, date consistency, checkbox completion)
-  - **Pipeline Integration**: Runs after Document AI and layout analysis with comprehensive error handling and graceful fallbacks
-  - **UI Components**: Visual approval timeline with signature flow, detected signatures (roles/dates/confidence), approval checkpoints (complete/incomplete/missing status), missing signature warnings, data-testid attributes for testing
-  - **Error Resilience**: Empty approval structure with all required fields provided in error/mock modes to ensure UI stability
-- Checkbox association bug fixed: checkboxes only marked as "used" after final selection (prevents premature consumption)
-- All compliance validation logic architect-reviewed and approved for regulatory use
-- Ready for production deployment with real pharmaceutical batch record documents
-
-**November 25, 2025** (Session 3):
-- **Layout Analysis & Field Recognition Module**: Implemented comprehensive LayoutAnalyzer service to identify page structure and map extracted data to predefined fields:
-  - **Section Detection**: Pattern-matching recognizes 7 batch record section types with correct taxonomy (materials_log, equipment_log, cip_sip_record, filtration_step, filling_log, inspection_sheet, reconciliation_page)
-  - **Spatial Grouping**: Algorithms group extracted elements (tables, form fields, checkboxes, handwritten text) into sections based on bounding box proximity and vertical positioning
-  - **Field Mapping**: Automatically extracts structured fields (batch number, lot number, date, temperature, quantity, operator) from recognized text patterns
-  - **Layout Style Detection**: Identifies page layout (single_column, multi_column, mixed, table_based) and page structure (headers, footers, column count)
-  - **Pipeline Integration**: Layout analyzer runs after Document AI extraction, storing results in `pages.metadata.layout` JSONB field
-  - **UI Enhancement**: PageDetailPanel displays structured sections with section type badges, confidence scores, extracted fields, and content summaries (table/checkbox/handwritten note counts)
-- All section type identifiers corrected to match required taxonomy
-- Architecture supports downstream rule checking and anomaly detection
-- Production-ready for user testing with actual batch record documents
-
-**November 25, 2025** (Session 2):
-- **Comprehensive Text Extraction Module**: Enhanced DocumentAIService with high-accuracy extraction methods:
-  - **Tables**: Row/column structure with cell values, headers, and positions (basic tables supported; complex rowSpan/colSpan has known limitations)
-  - **Form Fields**: Key-value pairs (e.g., "Batch Number: 12345") with bounding boxes and confidence scores
-  - **Checkboxes**: Detected checkbox states (checked/unchecked) with associated labels
-  - **Handwritten Regions**: Identified handwritten vs. printed text with confidence scores
-  - **Signature Blocks**: Placeholder for future signature detection
-  - **Text Blocks**: Paragraph-level text with positional information
-  - **Bounding Boxes**: Every element includes normalized pixel coordinates (x, y, width, height) for downstream classification and rule checking
-  - **Page Dimensions**: Width/height stored for coordinate normalization
-- All extraction data stored in `pages.metadata.extraction` JSONB field with organized sections
-- Updated PageDetailPanel UI to display all extracted structures in dedicated sections
-- Enhanced table rendering with colSpan/rowSpan support (basic scenarios)
-- **Known Limitation**: Complex multi-span tables may have rendering issues; simple tables work correctly
-
-**November 25, 2025** (Session 1):
-- Implemented side-by-side page viewer with original scanned images
-- Added page image extraction using pdf-to-img library (PNG, scale: 2)
-- Created secure API endpoint for serving page images
-- Fixed critical directory traversal vulnerabilities with path.relative() validation
-- Updated PageDetailPanel UI to wide 2-column layout (image left, data right)
-- Added error handling for missing or failed image loads
-
-**November 21, 2025**:
-- Fixed all TypeScript type safety issues in storage layers
-- Implemented complete processDocument pipeline
-- Resolved LSP diagnostics
-- All components properly wired with data-testid attributes
-- Database schema and storage layer fully functional
-
-## Project Structure
-```
-client/
-  src/
-    components/     # Reusable UI components
-    pages/          # Route pages (upload, documents, viewer)
-    lib/            # Query client and utilities
-server/
-  services/         # Document AI, classifier, PDF processor, layout analyzer, signature analyzer
-  routes.ts         # API endpoints (including approval validation)
-  db-storage.ts     # PostgreSQL storage layer
-  storage.ts        # In-memory fallback storage
-shared/
-  schema.ts         # Drizzle schema and types
-uploads/
-  page-images/      # Extracted page images organized by document ID
-```
-
-## Next Steps
-1. User provides API credentials
-2. Test complete document processing workflow
-3. Implement batch processing queue
-4. Add custom page type training
-5. Implement advanced field extraction
-6. Build document comparison features
-
-## Design Guidelines
-Following Material Design 3 with Inter font family, professional enterprise color palette, proper spacing and typography from design_guidelines.md.
+## External Dependencies
+- **Google Cloud Platform**:
+    - **Google Document AI**: For advanced document parsing and data extraction.
+    - Google Cloud Project ID and Location are required.
+- **OpenAI**: For AI-powered page classification.
+- **PostgreSQL**: Primary database for all application data and historical records.
+- **pdf-to-img**: Library used for converting PDF pages to images.

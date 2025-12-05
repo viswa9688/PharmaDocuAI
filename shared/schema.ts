@@ -223,6 +223,7 @@ export type PageValidationResult = {
   detectedFormulas: DetectedFormula[];
   alerts: ValidationAlert[];
   validationTimestamp: Date;
+  extractedText?: string;
 };
 
 // Document-level validation summary
