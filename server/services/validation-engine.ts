@@ -928,6 +928,158 @@ export class ValidationEngine {
   }
 
   /**
+   * Resolve majority value from a set of values across pages using frequency analysis.
+   * Implements majority-voting logic to determine the "expected" correct value.
+   * 
+   * @param valueLabel - Label for the value type (e.g., "Batch Number", "Lot Number")
+   * @param values - Array of values with their page numbers and sources
+   * @returns Majority analysis result with expected value, outliers, and confidence
+   */
+  private resolveMajorityValue(
+    valueLabel: string,
+    values: Array<{
+      value: string;
+      pageNumber: number;
+      source: SourceLocation;
+      sourceType: "structured" | "text-derived";
+      confidence: "high" | "medium" | "low";
+    }>
+  ): {
+    hasMajority: boolean;
+    expectedValue: string | null;
+    majorityCount: number;
+    totalCount: number;
+    confidenceTier: "high" | "medium" | "low";
+    outlierPages: Array<{
+      pageNumber: number;
+      foundValue: string;
+      source: SourceLocation;
+      sourceType: "structured" | "text-derived";
+    }>;
+    isTie: boolean;
+    tiedValues: string[];
+    allValues: Map<string, Array<{ pageNumber: number; source: SourceLocation; sourceType: "structured" | "text-derived" }>>;
+  } {
+    // Count frequency of each normalized value
+    const frequencyMap = new Map<string, Array<{
+      pageNumber: number;
+      source: SourceLocation;
+      sourceType: "structured" | "text-derived";
+    }>>();
+    
+    for (const item of values) {
+      // Normalize value: uppercase, trim whitespace
+      const normalizedValue = item.value.trim().toUpperCase();
+      if (!frequencyMap.has(normalizedValue)) {
+        frequencyMap.set(normalizedValue, []);
+      }
+      frequencyMap.get(normalizedValue)!.push({
+        pageNumber: item.pageNumber,
+        source: item.source,
+        sourceType: item.sourceType
+      });
+    }
+
+    const totalCount = values.length;
+    
+    // No values found
+    if (totalCount === 0) {
+      return {
+        hasMajority: false,
+        expectedValue: null,
+        majorityCount: 0,
+        totalCount: 0,
+        confidenceTier: "low",
+        outlierPages: [],
+        isTie: false,
+        tiedValues: [],
+        allValues: frequencyMap
+      };
+    }
+
+    // Find maximum frequency
+    let maxCount = 0;
+    let maxValue: string | null = null;
+    const valuesWithMaxCount: string[] = [];
+
+    for (const [value, entries] of Array.from(frequencyMap.entries())) {
+      if (entries.length > maxCount) {
+        maxCount = entries.length;
+        maxValue = value;
+        valuesWithMaxCount.length = 0;
+        valuesWithMaxCount.push(value);
+      } else if (entries.length === maxCount) {
+        valuesWithMaxCount.push(value);
+      }
+    }
+
+    // Check for tie (multiple values with same max frequency)
+    const isTie = valuesWithMaxCount.length > 1;
+    
+    // Calculate confidence tier based on majority percentage
+    const majorityPercentage = (maxCount / totalCount) * 100;
+    let confidenceTier: "high" | "medium" | "low";
+    if (majorityPercentage >= 80) {
+      confidenceTier = "high";
+    } else if (majorityPercentage >= 50) {
+      confidenceTier = "medium";
+    } else {
+      confidenceTier = "low";
+    }
+
+    // If there's a tie, we can't determine a clear majority
+    if (isTie) {
+      return {
+        hasMajority: false,
+        expectedValue: null,
+        majorityCount: maxCount,
+        totalCount,
+        confidenceTier: "low",
+        outlierPages: [],
+        isTie: true,
+        tiedValues: valuesWithMaxCount,
+        allValues: frequencyMap
+      };
+    }
+
+    // Identify outlier pages (pages with non-majority values)
+    const outlierPages: Array<{
+      pageNumber: number;
+      foundValue: string;
+      source: SourceLocation;
+      sourceType: "structured" | "text-derived";
+    }> = [];
+
+    for (const [value, entries] of Array.from(frequencyMap.entries())) {
+      if (value !== maxValue) {
+        for (const entry of entries) {
+          outlierPages.push({
+            pageNumber: entry.pageNumber,
+            foundValue: value,
+            source: entry.source,
+            sourceType: entry.sourceType
+          });
+        }
+      }
+    }
+
+    // Sort outliers by page number for consistent output
+    outlierPages.sort((a, b) => a.pageNumber - b.pageNumber);
+
+    return {
+      hasMajority: true,
+      expectedValue: maxValue,
+      majorityCount: maxCount,
+      totalCount,
+      confidenceTier,
+      outlierPages,
+      isTie: false,
+      tiedValues: [],
+      allValues: frequencyMap
+    };
+  }
+
+  /**
    * Check if a field label looks like a batch number field, handling OCR typos.
    * Matches patterns like "Batch No", "Butch No." (OCR error), "Batch Number", "Batch No./Date".
    * Rejects fields like "Batch Notes", "Batch No Verified" that are not number fields.
@@ -1268,58 +1420,105 @@ export class ValidationEngine {
       }
     }
 
-    // Alert 3: Cross-page consistency check
+    // Alert 3: Cross-page consistency check using majority-voting
     if (batchValuesFound.length > 0) {
       const uniqueValuesSet = new Set(batchValuesFound.map(b => b.value));
       const uniqueValues = Array.from(uniqueValuesSet);
 
       if (uniqueValues.length > 1) {
-        // Multiple different batch numbers - check if it's just confidence-related
-        const highConfidenceValues = batchValuesFound.filter(b => b.confidence === "high");
-        const uniqueHighConfidence = new Set(highConfidenceValues.map(b => b.value));
+        // Multiple different batch numbers - use majority-voting to identify expected value
+        const majorityResult = this.resolveMajorityValue("Batch Number", batchValuesFound);
         
-        // Build details with source type indicators
-        const pagesByValue = new Map<string, Array<{ page: number; sourceType: string; confidence: string }>>();
-        for (const found of batchValuesFound) {
-          if (!pagesByValue.has(found.value)) {
-            pagesByValue.set(found.value, []);
+        if (majorityResult.isTie) {
+          // Tie scenario: multiple values with equal frequency - ambiguous, needs manual review
+          const tiedValuesList = majorityResult.tiedValues.join(", ");
+          const detailLines: string[] = [];
+          for (const [value, entries] of Array.from(majorityResult.allValues.entries())) {
+            const pageList = entries.map((e: { pageNumber: number }) => e.pageNumber).join(", ");
+            detailLines.push(`"${value}" on page(s): ${pageList}`);
           }
-          pagesByValue.get(found.value)!.push({ 
-            page: found.pageNumber, 
-            sourceType: found.sourceType,
-            confidence: found.confidence
+          
+          alerts.push({
+            id: this.generateAlertId(),
+            category: "data_quality",
+            severity: "high",
+            title: "Ambiguous Batch Number - Manual Review Required",
+            message: `Multiple batch numbers appear with equal frequency (${majorityResult.majorityCount} pages each): ${tiedValuesList}. Cannot determine which is correct.`,
+            details: detailLines.join("; "),
+            source: batchValuesFound[0]?.source || { 
+              pageNumber: 1, 
+              sectionType: "", 
+              fieldLabel: "Batch No", 
+              boundingBox: { x: 0, y: 0, width: 0, height: 0 }, 
+              surroundingContext: "" 
+            },
+            relatedValues: [],
+            suggestedAction: "Review original documents to determine the correct batch number. This may indicate mixed documents.",
+            ruleId: null,
+            formulaId: null,
+            isResolved: false,
+            resolvedBy: null,
+            resolvedAt: null,
+            resolution: null
           });
+        } else if (majorityResult.hasMajority && majorityResult.outlierPages.length > 0) {
+          // Clear majority exists - flag outlier pages
+          const confidenceLabel = majorityResult.confidenceTier === "high" 
+            ? `High confidence (${Math.round((majorityResult.majorityCount / majorityResult.totalCount) * 100)}%)`
+            : majorityResult.confidenceTier === "medium"
+            ? `Medium confidence (${Math.round((majorityResult.majorityCount / majorityResult.totalCount) * 100)}%)`
+            : `Low confidence (${Math.round((majorityResult.majorityCount / majorityResult.totalCount) * 100)}%)`;
+          
+          // Document-level summary alert
+          const outlierSummary = majorityResult.outlierPages.map(o => 
+            `Page ${o.pageNumber}: "${o.foundValue}"`
+          ).join("; ");
+          
+          alerts.push({
+            id: this.generateAlertId(),
+            category: "consistency_error",
+            severity: "critical",
+            title: "Batch Number Inconsistency Detected",
+            message: `Expected batch number "${majorityResult.expectedValue}" (found on ${majorityResult.majorityCount} of ${majorityResult.totalCount} pages). ${majorityResult.outlierPages.length} page(s) have different values.`,
+            details: `${confidenceLabel}. Outliers: ${outlierSummary}`,
+            source: batchValuesFound[0]?.source || { 
+              pageNumber: 1, 
+              sectionType: "", 
+              fieldLabel: "Batch No", 
+              boundingBox: { x: 0, y: 0, width: 0, height: 0 }, 
+              surroundingContext: "" 
+            },
+            relatedValues: [],
+            suggestedAction: "Review outlier pages to determine if they belong to a different document or contain transcription errors.",
+            ruleId: null,
+            formulaId: null,
+            isResolved: false,
+            resolvedBy: null,
+            resolvedAt: null,
+            resolution: null
+          });
+          
+          // Individual alerts for each outlier page
+          for (const outlier of majorityResult.outlierPages) {
+            alerts.push({
+              id: this.generateAlertId(),
+              category: "consistency_error",
+              severity: "high",
+              title: "Batch Number Mismatch on Page",
+              message: `Page ${outlier.pageNumber} has batch number "${outlier.foundValue}" but expected "${majorityResult.expectedValue}" based on ${majorityResult.majorityCount} other pages.`,
+              details: `Source: ${outlier.sourceType}. This page may be from a different document or contain a data entry error.`,
+              source: outlier.source,
+              relatedValues: [],
+              suggestedAction: "Verify this page belongs to the same batch record. If correct, update other pages; if incorrect, separate this page.",
+              ruleId: null,
+              formulaId: null,
+              isResolved: false,
+              resolvedBy: null,
+              resolvedAt: null,
+              resolution: null
+            });
+          }
         }
-
-        const detailLines: string[] = [];
-        Array.from(pagesByValue.entries()).forEach(([value, entries]) => {
-          const pageInfo = entries.map(e => `${e.page} (${e.sourceType}, ${e.confidence})`).join(", ");
-          detailLines.push(`"${value}" on page(s): ${pageInfo}`);
-        });
-
-        alerts.push({
-          id: this.generateAlertId(),
-          category: "consistency_error",
-          severity: "critical",
-          title: "Batch Number Mismatch - Possible Mixed Documents",
-          message: `Different batch numbers detected: ${uniqueValues.join(", ")}. This may indicate pages from different documents were accidentally combined.`,
-          details: detailLines.join("; "),
-          source: batchValuesFound[0]?.source || { 
-            pageNumber: 1, 
-            sectionType: "", 
-            fieldLabel: "Batch No", 
-            boundingBox: { x: 0, y: 0, width: 0, height: 0 }, 
-            surroundingContext: "" 
-          },
-          relatedValues: [],
-          suggestedAction: "Review document to ensure all pages belong to the same batch. Separate pages if documents were mixed.",
-          ruleId: null,
-          formulaId: null,
-          isResolved: false,
-          resolvedBy: null,
-          resolvedAt: null,
-          resolution: null
-        });
       }
     }
 
@@ -1649,53 +1848,105 @@ export class ValidationEngine {
       }
     }
 
-    // Alert 3: Cross-page consistency check
+    // Alert 3: Cross-page consistency check using majority-voting
     if (lotValuesFound.length > 0) {
       const uniqueValuesSet = new Set(lotValuesFound.map(b => b.value));
       const uniqueValues = Array.from(uniqueValuesSet);
 
       if (uniqueValues.length > 1) {
-        const pagesByValue = new Map<string, Array<{ page: number; sourceType: string; confidence: string }>>();
-        for (const found of lotValuesFound) {
-          if (!pagesByValue.has(found.value)) {
-            pagesByValue.set(found.value, []);
+        // Multiple different lot numbers - use majority-voting to identify expected value
+        const majorityResult = this.resolveMajorityValue("Lot Number", lotValuesFound);
+        
+        if (majorityResult.isTie) {
+          // Tie scenario: multiple values with equal frequency - ambiguous, needs manual review
+          const tiedValuesList = majorityResult.tiedValues.join(", ");
+          const detailLines: string[] = [];
+          for (const [value, entries] of Array.from(majorityResult.allValues.entries())) {
+            const pageList = entries.map((e: { pageNumber: number }) => e.pageNumber).join(", ");
+            detailLines.push(`"${value}" on page(s): ${pageList}`);
           }
-          pagesByValue.get(found.value)!.push({ 
-            page: found.pageNumber, 
-            sourceType: found.sourceType,
-            confidence: found.confidence
+          
+          alerts.push({
+            id: this.generateAlertId(),
+            category: "data_quality",
+            severity: "high",
+            title: "Ambiguous Lot Number - Manual Review Required",
+            message: `Multiple lot numbers appear with equal frequency (${majorityResult.majorityCount} pages each): ${tiedValuesList}. Cannot determine which is correct.`,
+            details: detailLines.join("; "),
+            source: lotValuesFound[0]?.source || { 
+              pageNumber: 1, 
+              sectionType: "", 
+              fieldLabel: "Lot No", 
+              boundingBox: { x: 0, y: 0, width: 0, height: 0 }, 
+              surroundingContext: "" 
+            },
+            relatedValues: [],
+            suggestedAction: "Review original documents to determine the correct lot number. This may indicate mixed materials.",
+            ruleId: null,
+            formulaId: null,
+            isResolved: false,
+            resolvedBy: null,
+            resolvedAt: null,
+            resolution: null
           });
+        } else if (majorityResult.hasMajority && majorityResult.outlierPages.length > 0) {
+          // Clear majority exists - flag outlier pages
+          const confidenceLabel = majorityResult.confidenceTier === "high" 
+            ? `High confidence (${Math.round((majorityResult.majorityCount / majorityResult.totalCount) * 100)}%)`
+            : majorityResult.confidenceTier === "medium"
+            ? `Medium confidence (${Math.round((majorityResult.majorityCount / majorityResult.totalCount) * 100)}%)`
+            : `Low confidence (${Math.round((majorityResult.majorityCount / majorityResult.totalCount) * 100)}%)`;
+          
+          // Document-level summary alert
+          const outlierSummary = majorityResult.outlierPages.map(o => 
+            `Page ${o.pageNumber}: "${o.foundValue}"`
+          ).join("; ");
+          
+          alerts.push({
+            id: this.generateAlertId(),
+            category: "consistency_error",
+            severity: "high",
+            title: "Lot Number Inconsistency Detected",
+            message: `Expected lot number "${majorityResult.expectedValue}" (found on ${majorityResult.majorityCount} of ${majorityResult.totalCount} pages). ${majorityResult.outlierPages.length} page(s) have different values.`,
+            details: `${confidenceLabel}. Outliers: ${outlierSummary}`,
+            source: lotValuesFound[0]?.source || { 
+              pageNumber: 1, 
+              sectionType: "", 
+              fieldLabel: "Lot No", 
+              boundingBox: { x: 0, y: 0, width: 0, height: 0 }, 
+              surroundingContext: "" 
+            },
+            relatedValues: [],
+            suggestedAction: "Review outlier pages to determine if they contain incorrect lot numbers or material mix-ups.",
+            ruleId: null,
+            formulaId: null,
+            isResolved: false,
+            resolvedBy: null,
+            resolvedAt: null,
+            resolution: null
+          });
+          
+          // Individual alerts for each outlier page
+          for (const outlier of majorityResult.outlierPages) {
+            alerts.push({
+              id: this.generateAlertId(),
+              category: "consistency_error",
+              severity: "medium",
+              title: "Lot Number Mismatch on Page",
+              message: `Page ${outlier.pageNumber} has lot number "${outlier.foundValue}" but expected "${majorityResult.expectedValue}" based on ${majorityResult.majorityCount} other pages.`,
+              details: `Source: ${outlier.sourceType}. This page may have an incorrect lot number recorded.`,
+              source: outlier.source,
+              relatedValues: [],
+              suggestedAction: "Verify the lot number on this page is correct.",
+              ruleId: null,
+              formulaId: null,
+              isResolved: false,
+              resolvedBy: null,
+              resolvedAt: null,
+              resolution: null
+            });
+          }
         }
-
-        const detailLines: string[] = [];
-        Array.from(pagesByValue.entries()).forEach(([value, entries]) => {
-          const pageInfo = entries.map(e => `${e.page} (${e.sourceType}, ${e.confidence})`).join(", ");
-          detailLines.push(`"${value}" on page(s): ${pageInfo}`);
-        });
-
-        alerts.push({
-          id: this.generateAlertId(),
-          category: "consistency_error",
-          severity: "high",
-          title: "Lot Number Mismatch",
-          message: `Different lot numbers detected: ${uniqueValues.join(", ")}`,
-          details: detailLines.join("; "),
-          source: lotValuesFound[0]?.source || { 
-            pageNumber: 1, 
-            sectionType: "", 
-            fieldLabel: "Lot No", 
-            boundingBox: { x: 0, y: 0, width: 0, height: 0 }, 
-            surroundingContext: "" 
-          },
-          relatedValues: [],
-          suggestedAction: "Verify correct lot number is recorded consistently throughout document",
-          ruleId: null,
-          formulaId: null,
-          isResolved: false,
-          resolvedBy: null,
-          resolvedAt: null,
-          resolution: null
-        });
       }
     }
 
