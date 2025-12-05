@@ -65,11 +65,23 @@ export class DynamicFormulaDetector {
   ): DetectedFormula[] {
     const formulas: DetectedFormula[] = [];
 
-    for (const table of tables) {
+    console.log(`[DynamicFormulaDetector] Called for page ${pageNumber}, section: ${sectionType}`);
+    console.log(`[DynamicFormulaDetector] Received ${tables.length} tables to analyze`);
+
+    for (let i = 0; i < tables.length; i++) {
+      const table = tables[i];
+      console.log(`[DynamicFormulaDetector] Table ${i}: ${table.rows?.length || 0} rows`);
+      
+      if (table.rows && table.rows.length > 0 && table.rows[0].cells) {
+        const headerTexts = table.rows[0].cells.map(c => (c.text || "").substring(0, 50));
+        console.log(`[DynamicFormulaDetector] Table ${i} headers:`, headerTexts);
+      }
+      
       const tableFormulas = this.processTable(table, pageNumber, sectionType);
       formulas.push(...tableFormulas);
     }
 
+    console.log(`[DynamicFormulaDetector] Total formulas detected: ${formulas.length}`);
     return formulas;
   }
 
@@ -160,17 +172,68 @@ export class DynamicFormulaDetector {
   private extractFormulasFromHeaders(cells: TableCell[]): ParsedFormula[] {
     const formulas: ParsedFormula[] = [];
 
-    const formulaPattern = /([A-Za-z][A-Za-z0-9_\s]*)\s*\([A-Z]\)\s*=\s*(.+)/;
-    const simplePattern = /([A-Z][0-9]?)\s*=\s*(.+)/;
+    // Pattern 1: "Description (Variable) = formula" - captures variable letter from parentheses
+    // Example: "Content of Zn on as is basis (Z) = (100-LOD)×Assay..."
+    const descriptionFormulaPattern = /[^(]*\(([A-Z][0-9]?)\)\s*=\s*(.+)/i;
+    
+    // Pattern 2: Simple "Variable = formula"
+    // Example: "Z1 = (100-LOD)×Assay..."
+    const simplePattern = /^([A-Z][0-9]?)\s*=\s*(.+)/i;
+    
+    // Pattern 3: Any text with equals sign containing mathematical operators
+    // Example: "Result = Value1 × Value2 / 100"
+    const genericFormulaPattern = /=\s*(.+[×xX÷\/\*\+\-].+)/;
+
+    console.log(`[DynamicFormulaDetector] Scanning ${cells.length} column headers for formulas`);
 
     for (let colIdx = 0; colIdx < cells.length; colIdx++) {
       const text = cells[colIdx].text || "";
       
-      let match = text.match(formulaPattern) || text.match(simplePattern);
+      console.log(`[DynamicFormulaDetector] Header ${colIdx}: "${text.substring(0, 80)}..."`);
+      
+      let variableName: string | null = null;
+      let expression: string | null = null;
+
+      // Try pattern 1: Description (Variable) = formula
+      let match = text.match(descriptionFormulaPattern);
       if (match) {
-        const variableName = match[1].trim();
-        let expression = match[2].trim();
-        
+        variableName = match[1].trim();
+        expression = match[2].trim();
+        console.log(`[DynamicFormulaDetector] Matched description pattern: var=${variableName}`);
+      }
+
+      // Try pattern 2: Simple Variable = formula
+      if (!variableName) {
+        match = text.match(simplePattern);
+        if (match) {
+          variableName = match[1].trim();
+          expression = match[2].trim();
+          console.log(`[DynamicFormulaDetector] Matched simple pattern: var=${variableName}`);
+        }
+      }
+
+      // Try pattern 3: Generic formula with operators
+      if (!variableName && genericFormulaPattern.test(text)) {
+        // Extract variable name from column label (before equals)
+        const eqIndex = text.indexOf("=");
+        if (eqIndex > 0) {
+          const beforeEq = text.substring(0, eqIndex).trim();
+          // Look for variable in parentheses at end
+          const varMatch = beforeEq.match(/\(([A-Z][0-9]?)\)\s*$/i);
+          if (varMatch) {
+            variableName = varMatch[1];
+          } else {
+            // Use last word before equals as variable
+            const words = beforeEq.split(/\s+/);
+            variableName = words[words.length - 1].replace(/[^A-Za-z0-9]/g, "") || `Col${colIdx}`;
+          }
+          expression = text.substring(eqIndex + 1).trim();
+          console.log(`[DynamicFormulaDetector] Matched generic pattern: var=${variableName}`);
+        }
+      }
+
+      if (variableName && expression) {
+        // Clean up expression
         expression = expression.replace(/\([^)]*decimals?\)/gi, "");
         expression = expression.replace(/\s+/g, " ").trim();
 
@@ -186,12 +249,13 @@ export class DynamicFormulaDetector {
           columnIndex: colIdx
         });
 
-        console.log(`[DynamicFormulaDetector] Parsed formula from header: ${variableName} = ${expression}`);
-        console.log(`[DynamicFormulaDetector] Normalized: ${normalizedExpression}`);
-        console.log(`[DynamicFormulaDetector] Variables: ${variables.join(", ")}`);
+        console.log(`[DynamicFormulaDetector] ✓ Parsed formula: ${variableName} = ${expression}`);
+        console.log(`[DynamicFormulaDetector]   Normalized: ${normalizedExpression}`);
+        console.log(`[DynamicFormulaDetector]   Variables: ${variables.join(", ")}`);
       }
     }
 
+    console.log(`[DynamicFormulaDetector] Found ${formulas.length} formulas in headers`);
     return formulas;
   }
 
