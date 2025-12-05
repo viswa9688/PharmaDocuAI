@@ -50,6 +50,19 @@ Without these credentials:
 - Classification uses rule-based fallback instead of AI
 
 ## Recent Changes
+**December 05, 2025** (Session 7):
+- **Missing Batch Number Validation**: Fixed validation to detect empty batch number fields:
+  - Previously only checked for mismatched batch numbers across pages
+  - Now tracks batch number fields with empty values and generates "Batch Number Missing" alert with critical severity
+  - Alert includes page numbers where empty batch fields were found
+- **Table-Based Signature Detection**: Extended signature analyzer to detect signatures in table cells:
+  - Added table column header pattern matching for "Recorded By", "Verified By", "Sign", "Initial" columns
+  - Uses `isHeader` flag to distinguish header cells from data cells
+  - Non-empty cells in signature columns are treated as signatures
+  - Date association looks for dates in the same row
+  - Role mapping: "Recorded By" → performed_by, "Verified By" → verifier
+  - Keyword check updated to also search table column headers for signature-required pages
+
 **December 04, 2025** (Session 6):
 - **Comprehensive Validation Engine**: Implemented full validation system for pharmaceutical batch record compliance:
   - **Value Extraction Module**: Parses and normalizes all numeric values from form fields, tables, handwritten text, and raw text patterns with source location tracking (page number, section type, field label, bounding box, context)
