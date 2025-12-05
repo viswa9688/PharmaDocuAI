@@ -249,12 +249,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Run validation on all pages
       const pageResults = await Promise.all(
         pages.map(async (page) => {
-          return validationEngine.validatePage(
+          const result = await validationEngine.validatePage(
             page.pageNumber,
             page.metadata || {},
             page.classification,
             page.extractedText || ""
           );
+          
+          // Add visual anomaly alerts from page metadata
+          const metadata = page.metadata as Record<string, any> || {};
+          if (metadata.visualAnomalies && Array.isArray(metadata.visualAnomalies) && metadata.visualAnomalies.length > 0) {
+            const visualAlerts = validationEngine.createVisualAnomalyAlerts(metadata.visualAnomalies);
+            result.alerts.push(...visualAlerts);
+          }
+          
+          return result;
         })
       );
 
@@ -322,6 +331,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         page.classification,
         page.extractedText || ""
       );
+
+      // Add visual anomaly alerts from page metadata
+      const metadata = page.metadata as Record<string, any> || {};
+      if (metadata.visualAnomalies && Array.isArray(metadata.visualAnomalies) && metadata.visualAnomalies.length > 0) {
+        const visualAlerts = validationEngine.createVisualAnomalyAlerts(metadata.visualAnomalies);
+        result.alerts.push(...visualAlerts);
+      }
 
       res.json(result);
     } catch (error: any) {
@@ -407,6 +423,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.sendFile(normalizedPath);
     } catch (error: any) {
       console.error("Error serving page image:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Serve visual anomaly thumbnails
+  app.get("/api/thumbnails/:filename", async (req, res) => {
+    try {
+      const { filename } = req.params;
+      
+      // Validate filename to prevent directory traversal
+      if (!filename || filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+        return res.status(400).json({ error: "Invalid filename" });
+      }
+
+      const thumbnailsDir = path.join(process.cwd(), "uploads", "thumbnails");
+      const thumbnailPath = path.join(thumbnailsDir, filename);
+      const normalizedPath = path.normalize(thumbnailPath);
+      
+      // Ensure the resolved path is within thumbnails directory
+      const relativePath = path.relative(thumbnailsDir, normalizedPath);
+      if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+        console.error("Thumbnail directory traversal attempt detected:", { filename });
+        return res.status(403).json({ error: "Invalid thumbnail path" });
+      }
+
+      // Check if file exists
+      const fs = await import('fs');
+      if (!fs.existsSync(normalizedPath)) {
+        return res.status(404).json({ error: "Thumbnail not found" });
+      }
+
+      res.sendFile(normalizedPath);
+    } catch (error: any) {
+      console.error("Error serving thumbnail:", error);
       res.status(500).json({ error: error.message });
     }
   });

@@ -18,7 +18,10 @@ import {
   Clock,
   ArrowRight,
   ChevronRight,
-  FileX2
+  FileX2,
+  Eye,
+  PenLine,
+  ImageOff
 } from "lucide-react";
 import type { 
   ValidationAlert, 
@@ -51,7 +54,8 @@ const categoryConfig: Record<AlertCategory, { icon: typeof Calculator; label: st
   consistency_error: { icon: AlertTriangle, label: "Consistency Error" },
   format_error: { icon: FileWarning, label: "Format Error" },
   sop_violation: { icon: AlertTriangle, label: "SOP Violation" },
-  data_quality: { icon: AlertCircle, label: "Data Quality" }
+  data_quality: { icon: AlertCircle, label: "Data Quality" },
+  data_integrity: { icon: PenLine, label: "Data Integrity" }
 };
 
 interface MissingPagesData {
@@ -211,7 +215,7 @@ export function ValidationAlerts({ documentId, onPageClick }: ValidationAlertsPr
           </div>
         ) : (
           <Tabs defaultValue="all" className="w-full">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-5">
               <TabsTrigger value="all" data-testid="tab-all-alerts">
                 All ({summary.totalAlerts})
               </TabsTrigger>
@@ -223,6 +227,9 @@ export function ValidationAlerts({ documentId, onPageClick }: ValidationAlertsPr
               </TabsTrigger>
               <TabsTrigger value="violations" data-testid="tab-violation-alerts">
                 Violations ({summary.alertsByCategory.range_violation + summary.alertsByCategory.sop_violation})
+              </TabsTrigger>
+              <TabsTrigger value="integrity" data-testid="tab-integrity-alerts">
+                Integrity ({summary.alertsByCategory.data_integrity})
               </TabsTrigger>
             </TabsList>
 
@@ -259,6 +266,15 @@ export function ValidationAlerts({ documentId, onPageClick }: ValidationAlertsPr
                   alerts={filteredAlerts.filter(a => 
                     a.category === 'range_violation' || a.category === 'sop_violation'
                   )} 
+                  onPageClick={onPageClick}
+                />
+              </ScrollArea>
+            </TabsContent>
+
+            <TabsContent value="integrity" className="mt-4">
+              <ScrollArea className="h-[400px]">
+                <DataIntegrityAlertList 
+                  alerts={filteredAlerts.filter(a => a.category === 'data_integrity')} 
                   onPageClick={onPageClick}
                 />
               </ScrollArea>
@@ -388,5 +404,171 @@ export function PageValidationBadge({ documentId, pageNumber }: PageValidationBa
     >
       {data.alerts.length} {data.alerts.length === 1 ? 'issue' : 'issues'}
     </Badge>
+  );
+}
+
+interface DataIntegrityDetails {
+  anomalyType: string;
+  confidence: number;
+  detectionMethod: string;
+  affectedText?: string;
+  thumbnailPath?: string;
+  boundingBox?: { x: number; y: number; width: number; height: number };
+  description?: string;
+}
+
+function DataIntegrityAlertList({ 
+  alerts, 
+  onPageClick 
+}: { 
+  alerts: ValidationAlert[]; 
+  onPageClick?: (pageNumber: number) => void;
+}) {
+  if (alerts.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+        <Eye className="h-8 w-8 mb-2 opacity-50" />
+        <p>No data integrity issues detected</p>
+        <p className="text-xs mt-1">Strike-offs, corrections, and overwrites will appear here</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {alerts.map((alert, index) => (
+        <DataIntegrityAlertCard 
+          key={alert.id || index} 
+          alert={alert} 
+          onPageClick={onPageClick}
+        />
+      ))}
+    </div>
+  );
+}
+
+function DataIntegrityAlertCard({ 
+  alert, 
+  onPageClick 
+}: { 
+  alert: ValidationAlert; 
+  onPageClick?: (pageNumber: number) => void;
+}) {
+  const severity = severityConfig[alert.severity];
+  const SeverityIcon = severity.icon;
+
+  let details: DataIntegrityDetails | null = null;
+  try {
+    if (alert.details) {
+      details = JSON.parse(alert.details) as DataIntegrityDetails;
+    }
+  } catch {
+    details = null;
+  }
+
+  const anomalyTypeIcons: Record<string, typeof PenLine> = {
+    strike_through: PenLine,
+    red_mark: AlertCircle,
+    overwrite: FileWarning,
+    erasure: ImageOff,
+    correction_fluid: ImageOff,
+    scribble: PenLine
+  };
+
+  const AnomalyIcon = details?.anomalyType ? (anomalyTypeIcons[details.anomalyType] || Eye) : Eye;
+
+  return (
+    <Card 
+      className="p-4 hover:bg-muted/50 transition-colors cursor-pointer border-l-4 border-l-orange-500"
+      onClick={() => onPageClick?.(alert.source.pageNumber)}
+      data-testid={`integrity-alert-card-${alert.id}`}
+    >
+      <div className="flex items-start gap-4">
+        {/* Thumbnail Section */}
+        <div className="flex-shrink-0">
+          {details?.thumbnailPath ? (
+            <div className="relative w-24 h-24 bg-muted rounded-md overflow-hidden border border-border">
+              <img 
+                src={`/api/thumbnails/${details.thumbnailPath.split('/').pop()}`}
+                alt="Visual anomaly"
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                  (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
+                }}
+              />
+              <div className="hidden absolute inset-0 flex items-center justify-center bg-muted">
+                <AnomalyIcon className="h-8 w-8 text-muted-foreground" />
+              </div>
+              {/* Bounding box overlay indicator */}
+              {details?.boundingBox && (
+                <div className="absolute inset-0 border-2 border-orange-500 pointer-events-none opacity-50" />
+              )}
+            </div>
+          ) : (
+            <div className="w-24 h-24 bg-muted rounded-md flex items-center justify-center border border-border">
+              <AnomalyIcon className="h-8 w-8 text-muted-foreground" />
+            </div>
+          )}
+        </div>
+
+        {/* Content Section */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <SeverityIcon className={`h-4 w-4 ${alert.severity === 'critical' || alert.severity === 'high' ? 'text-destructive' : 'text-orange-500'}`} />
+            <span className="font-medium text-sm" data-testid="text-integrity-title">
+              {alert.title}
+            </span>
+            <Badge variant="outline" className="text-xs bg-orange-50 dark:bg-orange-950 border-orange-200 dark:border-orange-800 text-orange-700 dark:text-orange-300">
+              <PenLine className="h-3 w-3 mr-1" />
+              Data Integrity
+            </Badge>
+          </div>
+
+          <p className="text-sm text-muted-foreground mb-2" data-testid="text-integrity-message">
+            {alert.message}
+          </p>
+
+          {/* Detection Details */}
+          <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground mb-2">
+            <span className="flex items-center gap-1">
+              <ArrowRight className="h-3 w-3" />
+              Page {alert.source.pageNumber}
+            </span>
+            {details?.anomalyType && (
+              <Badge variant="secondary" className="text-xs">
+                {details.anomalyType.replace(/_/g, ' ')}
+              </Badge>
+            )}
+            {details?.confidence && (
+              <span className="text-xs">
+                Confidence: {Math.round(details.confidence * 100)}%
+              </span>
+            )}
+            {details?.detectionMethod && (
+              <span className="text-xs opacity-70">
+                via {details.detectionMethod}
+              </span>
+            )}
+          </div>
+
+          {/* Affected Text */}
+          {details?.affectedText && (
+            <div className="mt-2 p-2 bg-orange-50 dark:bg-orange-950 rounded text-xs border border-orange-200 dark:border-orange-800">
+              <span className="font-medium text-orange-800 dark:text-orange-200">Affected text: </span>
+              <span className="font-mono text-orange-900 dark:text-orange-100">{details.affectedText}</span>
+            </div>
+          )}
+
+          {/* Suggested Action */}
+          {alert.suggestedAction && (
+            <div className="mt-2 flex items-start gap-1 text-xs text-primary">
+              <ChevronRight className="h-3 w-3 mt-0.5 flex-shrink-0" />
+              <span>{alert.suggestedAction}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </Card>
   );
 }
