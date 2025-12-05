@@ -9,6 +9,7 @@ import { createPDFProcessorService } from "./services/pdf-processor";
 import { LayoutAnalyzer } from "./services/layout-analyzer";
 import { SignatureAnalyzer } from "./services/signature-analyzer";
 import { ValidationEngine } from "./services/validation-engine";
+import { VisualAnalyzer } from "./services/visual-analyzer";
 
 // Use PostgreSQL database storage for persistence
 const storage = new DBStorage();
@@ -27,6 +28,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const layoutAnalyzer = new LayoutAnalyzer();
   const signatureAnalyzer = new SignatureAnalyzer();
   const validationEngine = new ValidationEngine();
+  const visualAnalyzer = new VisualAnalyzer('uploads/thumbnails');
 
   // Upload and process document
   app.post("/api/documents/upload", upload.single("file"), async (req, res) => {
@@ -511,7 +513,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   }
                 }
 
-                // Store page with all rich extraction data, layout analysis, and approvals
+                // Perform visual anomaly detection (strike-offs, red marks, corrections)
+                let visualAnalysis = null;
+                const pageImagePath = pageImages[actualPageNumber - 1];
+                if (pageImagePath && pageData) {
+                  try {
+                    const fullImagePath = path.join(process.cwd(), 'uploads', pageImagePath);
+                    const textRegions = visualAnalyzer.extractTextRegionsFromOCR(pageData);
+                    visualAnalysis = await visualAnalyzer.analyzePageImage(
+                      fullImagePath,
+                      actualPageNumber,
+                      textRegions,
+                      documentId
+                    );
+                    if (visualAnalysis.anomalies.length > 0) {
+                      console.log(`Visual anomalies detected on page ${actualPageNumber}: ${visualAnalysis.anomalies.length}`);
+                    }
+                  } catch (visualError: any) {
+                    console.error(`Visual analysis failed for page ${actualPageNumber}:`, visualError.message);
+                  }
+                }
+
+                // Store page with all rich extraction data, layout analysis, approvals, and visual analysis
                 await storage.createPage({
                   documentId,
                   pageNumber: actualPageNumber,
@@ -538,6 +561,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     layout: layoutAnalysis,
                     // Store signature and approval analysis
                     approvals: approvalAnalysis,
+                    // Store visual anomaly detection results
+                    visualAnomalies: visualAnalysis?.anomalies || [],
                   } as Record<string, any>,
                 });
 
@@ -608,7 +633,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 }
               }
 
-              // Store page with all rich extraction data, layout analysis, and approvals
+              // Perform visual anomaly detection (strike-offs, red marks, corrections)
+              let visualAnalysis = null;
+              const pageImagePath = pageImages[pageNumber - 1];
+              if (pageImagePath && pageData) {
+                try {
+                  const fullImagePath = path.join(process.cwd(), 'uploads', pageImagePath);
+                  const textRegions = visualAnalyzer.extractTextRegionsFromOCR(pageData);
+                  visualAnalysis = await visualAnalyzer.analyzePageImage(
+                    fullImagePath,
+                    pageNumber,
+                    textRegions,
+                    documentId
+                  );
+                  if (visualAnalysis.anomalies.length > 0) {
+                    console.log(`Visual anomalies detected on page ${pageNumber}: ${visualAnalysis.anomalies.length}`);
+                  }
+                } catch (visualError: any) {
+                  console.error(`Visual analysis failed for page ${pageNumber}:`, visualError.message);
+                }
+              }
+
+              // Store page with all rich extraction data, layout analysis, approvals, and visual analysis
               await storage.createPage({
                 documentId,
                 pageNumber,
@@ -633,6 +679,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   layout: layoutAnalysis,
                   // Store signature and approval analysis
                   approvals: approvalAnalysis,
+                  // Store visual anomaly detection results
+                  visualAnomalies: visualAnalysis?.anomalies || [],
                 } as Record<string, any>,
               });
 
