@@ -2707,6 +2707,9 @@ export class ValidationEngine {
     const alerts: ValidationAlert[] = [];
 
     // Skip validation if we don't have both bounds
+    // NOTE: Missing bounds are already reported via CRITICAL severity alerts from
+    // generateBatchDateExtractionAlerts(). We cannot validate dates against a window
+    // that doesn't exist, so we return without additional alerts here.
     if (!batchBounds.commencementTimestamp || !batchBounds.completionTimestamp) {
       return alerts;
     }
