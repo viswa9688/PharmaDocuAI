@@ -931,10 +931,12 @@ export class ValidationEngine {
   /**
    * Check if all pages have the same batch number using form fields data.
    * Looks for fields labeled "Batch No", "Batch No.", "Batch Number", etc.
+   * Also detects missing batch numbers (empty values).
    */
   private checkBatchNumberConsistency(pageResults: PageValidationResult[]): ValidationAlert | null {
     const batchNumberLabels = ["batch no", "batch no.", "batch number", "batch #"];
     const batchValuesFound: Array<{ value: string; pageNumber: number; source: SourceLocation }> = [];
+    const emptyBatchFields: Array<{ pageNumber: number; source: SourceLocation }> = [];
 
     for (const page of pageResults) {
       for (const extractedValue of page.extractedValues) {
@@ -949,12 +951,40 @@ export class ValidationEngine {
               pageNumber: extractedValue.source.pageNumber,
               source: extractedValue.source
             });
+          } else {
+            // Track batch number fields with empty values
+            emptyBatchFields.push({
+              pageNumber: extractedValue.source.pageNumber,
+              source: extractedValue.source
+            });
           }
         }
       }
     }
 
-    // If no batch numbers found, nothing to validate
+    // If batch number fields are found but all are empty, generate missing value alert
+    if (batchValuesFound.length === 0 && emptyBatchFields.length > 0) {
+      const pagesWithEmptyBatch = Array.from(new Set(emptyBatchFields.map(f => f.pageNumber)));
+      return {
+        id: this.generateAlertId(),
+        category: "missing_value",
+        severity: "critical",
+        title: "Batch Number Missing",
+        message: `Batch number field is present but empty. This is a critical field required for batch traceability.`,
+        details: `Empty batch number found on page(s): ${pagesWithEmptyBatch.join(", ")}`,
+        source: emptyBatchFields[0].source,
+        relatedValues: [],
+        suggestedAction: "Enter the batch number for proper document identification and traceability.",
+        ruleId: null,
+        formulaId: null,
+        isResolved: false,
+        resolvedBy: null,
+        resolvedAt: null,
+        resolution: null
+      };
+    }
+
+    // If no batch number fields found at all, nothing to validate
     if (batchValuesFound.length === 0) {
       return null;
     }

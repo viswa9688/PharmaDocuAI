@@ -4,6 +4,8 @@ import type {
   CheckboxData,
   FormField,
   BoundingBox,
+  TableData,
+  TableCell,
 } from './document-ai';
 import type { TextBlock } from './layout-analyzer';
 
@@ -62,6 +64,7 @@ export interface ExtractedApprovalData {
   checkboxes?: CheckboxData[];
   formFields?: FormField[];
   textBlocks?: TextBlock[];
+  tables?: TableData[];
   pageDimensions?: { width: number; height: number };
 }
 
@@ -155,9 +158,18 @@ export class SignatureAnalyzer {
     /verified\s*by/i,
   ];
 
+  // Table column header patterns for signature columns
+  private tableSignatureColumnPatterns = [
+    /recorded\s*b?y?/i,
+    /verified\s*b?y?/i,
+    /sign(?:ed|ature)?/i,
+    /initial/i,
+  ];
+
   /**
    * Check if the page contains keywords that indicate signatures should be checked.
    * Only pages with "recorded by" or "verified by" (case-insensitive) require signature validation.
+   * Also checks table column headers.
    */
   private pageRequiresSignatureCheck(data: ExtractedApprovalData): boolean {
     // Collect all text from the page
@@ -180,6 +192,17 @@ export class SignatureAnalyzer {
         }
         if (field.fieldValue) {
           allText.push(field.fieldValue);
+        }
+      }
+    }
+
+    // From table column headers (check header cells)
+    if (data.tables) {
+      for (const table of data.tables) {
+        for (const cell of table.cells) {
+          if (cell.isHeader && cell.text) {
+            allText.push(cell.text);
+          }
         }
       }
     }
@@ -317,7 +340,138 @@ export class SignatureAnalyzer {
       }
     }
 
+    // Also detect signatures from table cells in signature columns
+    const tableSignatures = this.detectTableSignatures(data.tables || []);
+    detectedSignatures.push(...tableSignatures);
+
     return detectedSignatures;
+  }
+
+  /**
+   * Detect signatures from table cells.
+   * Looks for columns with headers like "Recorded By", "Verified By", etc.
+   * and treats non-empty cells in those columns as signatures.
+   */
+  private detectTableSignatures(tables: TableData[]): DetectedSignature[] {
+    const signatures: DetectedSignature[] = [];
+
+    for (const table of tables) {
+      // Find signature columns by checking header cells
+      const signatureColumns = this.findSignatureColumns(table);
+      
+      if (signatureColumns.length === 0) continue;
+
+      // For each signature column, check all non-header cells
+      for (const sigCol of signatureColumns) {
+        const columnCells = table.cells.filter(
+          cell => cell.colIndex === sigCol.columnIndex && !cell.isHeader
+        );
+
+        for (const cell of columnCells) {
+          // Skip empty cells
+          const cellText = cell.text?.trim() || '';
+          if (!cellText) continue;
+
+          // This cell has content - treat it as a signature
+          // Look for date in same row
+          const dateCell = this.findDateInRow(table, cell.rowIndex, sigCol.columnIndex);
+
+          const signature: DetectedSignature = {
+            role: sigCol.role,
+            fieldLabel: sigCol.headerText,
+            boundingBox: cell.boundingBox || { x: 0, y: 0, width: 50, height: 20 },
+            associatedDate: dateCell?.text,
+            dateBoundingBox: dateCell?.boundingBox,
+            confidence: cell.confidence || 80,
+            signatureType: 'handwritten', // Assume table signatures are handwritten
+            hasDate: !!dateCell,
+          };
+
+          signatures.push(signature);
+        }
+      }
+    }
+
+    return signatures;
+  }
+
+  /**
+   * Find columns in a table that appear to be signature columns.
+   */
+  private findSignatureColumns(table: TableData): Array<{ columnIndex: number; headerText: string; role: SignatureRole }> {
+    const signatureColumns: Array<{ columnIndex: number; headerText: string; role: SignatureRole }> = [];
+    
+    // Get header cells
+    const headerCells = table.cells.filter(cell => cell.isHeader);
+    
+    for (const headerCell of headerCells) {
+      const headerText = headerCell.text?.trim() || '';
+      
+      // Check if this header matches any signature column pattern
+      for (const pattern of this.tableSignatureColumnPatterns) {
+        if (pattern.test(headerText)) {
+          // Determine the role from the header text
+          const role = this.identifyTableColumnRole(headerText);
+          
+          signatureColumns.push({
+            columnIndex: headerCell.colIndex,
+            headerText,
+            role,
+          });
+          break; // Only add once per column
+        }
+      }
+    }
+
+    return signatureColumns;
+  }
+
+  /**
+   * Identify the role from a table column header.
+   */
+  private identifyTableColumnRole(headerText: string): SignatureRole {
+    const lowerHeader = headerText.toLowerCase();
+    
+    // Check for specific patterns
+    if (/recorded\s*b?y?/i.test(lowerHeader)) {
+      return 'performed_by'; // "Recorded By" is typically the operator/performer
+    }
+    if (/verified\s*b?y?/i.test(lowerHeader) || /ipqa|qc|qa/i.test(lowerHeader)) {
+      return 'verifier';
+    }
+    if (/review/i.test(lowerHeader)) {
+      return 'reviewer';
+    }
+    if (/approv/i.test(lowerHeader)) {
+      return 'qa_approver';
+    }
+    if (/check/i.test(lowerHeader)) {
+      return 'checked_by';
+    }
+    
+    return 'operator'; // Default to operator for unrecognized signature columns
+  }
+
+  /**
+   * Find a date cell in the same row as a signature cell.
+   */
+  private findDateInRow(table: TableData, rowIndex: number, signatureColIndex: number): TableCell | null {
+    const rowCells = table.cells.filter(
+      cell => cell.rowIndex === rowIndex && cell.colIndex !== signatureColIndex
+    );
+
+    for (const cell of rowCells) {
+      const cellText = cell.text?.trim() || '';
+      
+      // Check if this cell contains a date
+      for (const datePattern of this.datePatterns) {
+        if (datePattern.test(cellText)) {
+          return cell;
+        }
+      }
+    }
+
+    return null;
   }
 
   private findNearestLabel(

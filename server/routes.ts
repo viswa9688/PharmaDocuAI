@@ -464,6 +464,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                       checkboxes: pageData.checkboxes,
                       formFields: pageData.formFields,
                       textBlocks: pageData.textBlocks,
+                      tables: pageData.tables,
                       pageDimensions: pageData.pageDimensions,
                     });
                   } catch (approvalError: any) {
@@ -560,6 +561,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     checkboxes: pageData.checkboxes,
                     formFields: pageData.formFields,
                     textBlocks: pageData.textBlocks,
+                    tables: pageData.tables,
                     pageDimensions: pageData.pageDimensions,
                   });
                 } catch (approvalError: any) {
