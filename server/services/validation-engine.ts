@@ -2722,6 +2722,32 @@ export class ValidationEngine {
     // - Page 2: Contains the batch details section with commencement/completion dates themselves
     const excludedPages = [1, 2];
 
+    // Field labels that are allowed to have dates before the batch window
+    // These are document-level metadata fields that naturally predate manufacturing
+    const excludedFieldLabels = [
+      "effective date",
+      "eff. date",
+      "eff date",
+      "issue date",
+      "revision date",
+      "rev date",
+      "document date",
+      "doc date",
+      "approval date",
+      "approved date",
+      "version date"
+    ];
+
+    // Helper function to check if a field label should be excluded
+    const isExcludedFieldLabel = (label: string): boolean => {
+      if (!label) return false;
+      const normalizedLabel = label.toLowerCase().trim();
+      return excludedFieldLabels.some(excluded => 
+        normalizedLabel.includes(excluded) || 
+        excluded.includes(normalizedLabel)
+      );
+    };
+
     // Collect all date/datetime values from the document
     for (const page of pageResults) {
       // Skip excluded pages (document metadata and batch details)
@@ -2731,6 +2757,11 @@ export class ValidationEngine {
 
       for (const value of page.extractedValues) {
         if (value.valueType === "date" || value.valueType === "datetime") {
+          // Skip excluded field labels (document metadata dates like "Effective Date")
+          if (isExcludedFieldLabel(value.source.fieldLabel || "")) {
+            continue;
+          }
+
           const parsedDate = this.parseExtractedDate(value.rawValue);
           
           if (parsedDate) {
@@ -2769,6 +2800,11 @@ export class ValidationEngine {
       if (page.extractedText) {
         const textDates = this.extractAllDatesFromText(page.extractedText);
         for (const textDate of textDates) {
+          // Skip excluded field labels in raw text context (document metadata dates like "Effective Date")
+          if (isExcludedFieldLabel(textDate.context || "")) {
+            continue;
+          }
+
           const parsedDate = this.parseExtractedDate(textDate.value);
           
           if (parsedDate) {
