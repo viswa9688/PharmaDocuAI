@@ -51,6 +51,12 @@ Without these credentials:
 
 ## Recent Changes
 **December 05, 2025** (Session 7):
+- **OCR Typo Handling for Batch/Lot Numbers**: Added fuzzy matching to detect batch and lot number fields even when OCR misreads them:
+  - Handles common OCR errors: "Butch No." → "Batch No.", "Betch No." → "Batch No.", etc.
+  - Supports 9 batch word typos (butch, betch, botch, balch, bateh, barch, 8atch, ba1ch) and 5 lot word typos
+  - Recognizes composite labels like "Batch No./Date", "Lot No (COA)", "Batch No & Expiry"
+  - Rejects false positives like "Batch Notes", "Batch No Verified" using strict regex patterns
+  - Enables cross-page batch number consistency checks to work with OCR-degraded documents
 - **Missing Batch Number Validation**: Fixed validation to detect empty batch number fields:
   - Previously only checked for mismatched batch numbers across pages
   - Now tracks batch number fields with empty values and generates "Batch Number Missing" alert with critical severity
