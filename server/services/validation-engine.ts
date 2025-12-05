@@ -909,48 +909,16 @@ export class ValidationEngine {
   private validateCrossPageConsistency(pageResults: PageValidationResult[]): ValidationAlert[] {
     const alerts: ValidationAlert[] = [];
 
-    const batchNumbers = this.collectValuesByPattern(pageResults, /batch.*(?:no|#|number)/i);
-    if (batchNumbers.size > 1) {
-      const values = Array.from(batchNumbers.values()).flat();
-      alerts.push({
-        id: this.generateAlertId(),
-        category: "consistency_error",
-        severity: "high",
-        title: "Inconsistent Batch Numbers",
-        message: `Multiple batch numbers detected across document: ${Array.from(batchNumbers.keys()).join(", ")}`,
-        details: `Found on pages: ${values.map(v => v.source.pageNumber).join(", ")}`,
-        source: values[0]?.source || { pageNumber: 1, sectionType: "", fieldLabel: "Batch Number", boundingBox: { x: 0, y: 0, width: 0, height: 0 }, surroundingContext: "" },
-        relatedValues: values,
-        suggestedAction: "Verify correct batch number is recorded consistently throughout document",
-        ruleId: null,
-        formulaId: null,
-        isResolved: false,
-        resolvedBy: null,
-        resolvedAt: null,
-        resolution: null
-      });
+    // Check batch number consistency using form fields directly
+    const batchNumberCheck = this.checkBatchNumberConsistency(pageResults);
+    if (batchNumberCheck) {
+      alerts.push(batchNumberCheck);
     }
 
-    const lotNumbers = this.collectValuesByPattern(pageResults, /lot.*(?:no|#|number)/i);
-    if (lotNumbers.size > 1) {
-      const values = Array.from(lotNumbers.values()).flat();
-      alerts.push({
-        id: this.generateAlertId(),
-        category: "consistency_error",
-        severity: "high",
-        title: "Inconsistent Lot Numbers",
-        message: `Multiple lot numbers detected across document: ${Array.from(lotNumbers.keys()).join(", ")}`,
-        details: `Found on pages: ${values.map(v => v.source.pageNumber).join(", ")}`,
-        source: values[0]?.source || { pageNumber: 1, sectionType: "", fieldLabel: "Lot Number", boundingBox: { x: 0, y: 0, width: 0, height: 0 }, surroundingContext: "" },
-        relatedValues: values,
-        suggestedAction: "Verify correct lot number is recorded consistently throughout document",
-        ruleId: null,
-        formulaId: null,
-        isResolved: false,
-        resolvedBy: null,
-        resolvedAt: null,
-        resolution: null
-      });
+    // Check lot number consistency using form fields directly  
+    const lotNumberCheck = this.checkLotNumberConsistency(pageResults);
+    if (lotNumberCheck) {
+      alerts.push(lotNumberCheck);
     }
 
     const timestamps = this.collectTimestamps(pageResults);
@@ -960,25 +928,162 @@ export class ValidationEngine {
     return alerts;
   }
 
-  private collectValuesByPattern(
-    pageResults: PageValidationResult[],
-    pattern: RegExp
-  ): Map<string, ExtractedValue[]> {
-    const valuesByContent = new Map<string, ExtractedValue[]>();
+  /**
+   * Check if all pages have the same batch number using form fields data.
+   * Looks for fields labeled "Batch No", "Batch No.", "Batch Number", etc.
+   */
+  private checkBatchNumberConsistency(pageResults: PageValidationResult[]): ValidationAlert | null {
+    const batchNumberLabels = ["batch no", "batch no.", "batch number", "batch #"];
+    const batchValuesFound: Array<{ value: string; pageNumber: number; source: SourceLocation }> = [];
 
     for (const page of pageResults) {
-      for (const value of page.extractedValues) {
-        if (pattern.test(value.source.fieldLabel) && value.rawValue.trim()) {
-          const key = value.rawValue.trim().toUpperCase();
-          if (!valuesByContent.has(key)) {
-            valuesByContent.set(key, []);
+      for (const extractedValue of page.extractedValues) {
+        const fieldLabel = extractedValue.source.fieldLabel.toLowerCase().trim();
+        
+        // Check if this field is a batch number field
+        if (batchNumberLabels.some(label => fieldLabel === label || fieldLabel.includes("batch no"))) {
+          const value = extractedValue.rawValue.trim().toUpperCase();
+          if (value) {
+            batchValuesFound.push({
+              value,
+              pageNumber: extractedValue.source.pageNumber,
+              source: extractedValue.source
+            });
           }
-          valuesByContent.get(key)!.push(value);
         }
       }
     }
 
-    return valuesByContent;
+    // If no batch numbers found, nothing to validate
+    if (batchValuesFound.length === 0) {
+      return null;
+    }
+
+    // Get unique batch number values
+    const uniqueValuesSet = new Set(batchValuesFound.map(b => b.value));
+    const uniqueValues = Array.from(uniqueValuesSet);
+
+    // If only one unique value, all pages are consistent
+    if (uniqueValues.length === 1) {
+      return null;
+    }
+
+    // Multiple different batch numbers found - this is a critical error
+    // Could indicate pages from different documents were mixed together
+    const pagesByValue = new Map<string, number[]>();
+    for (const found of batchValuesFound) {
+      if (!pagesByValue.has(found.value)) {
+        pagesByValue.set(found.value, []);
+      }
+      pagesByValue.get(found.value)!.push(found.pageNumber);
+    }
+
+    const detailLines: string[] = [];
+    Array.from(pagesByValue.entries()).forEach(([value, pages]) => {
+      detailLines.push(`"${value}" on page(s): ${pages.join(", ")}`);
+    });
+
+    return {
+      id: this.generateAlertId(),
+      category: "consistency_error",
+      severity: "critical",
+      title: "Batch Number Mismatch - Possible Mixed Documents",
+      message: `Different batch numbers detected: ${uniqueValues.join(", ")}. This may indicate pages from different documents were accidentally combined.`,
+      details: detailLines.join("; "),
+      source: batchValuesFound[0]?.source || { 
+        pageNumber: 1, 
+        sectionType: "", 
+        fieldLabel: "Batch No", 
+        boundingBox: { x: 0, y: 0, width: 0, height: 0 }, 
+        surroundingContext: "" 
+      },
+      relatedValues: [],
+      suggestedAction: "Review document to ensure all pages belong to the same batch. Separate pages if documents were mixed.",
+      ruleId: null,
+      formulaId: null,
+      isResolved: false,
+      resolvedBy: null,
+      resolvedAt: null,
+      resolution: null
+    };
+  }
+
+  /**
+   * Check if all pages have the same lot number using form fields data.
+   */
+  private checkLotNumberConsistency(pageResults: PageValidationResult[]): ValidationAlert | null {
+    const lotNumberLabels = ["lot no", "lot no.", "lot number", "lot #"];
+    const lotValuesFound: Array<{ value: string; pageNumber: number; source: SourceLocation }> = [];
+
+    for (const page of pageResults) {
+      for (const extractedValue of page.extractedValues) {
+        const fieldLabel = extractedValue.source.fieldLabel.toLowerCase().trim();
+        
+        // Check if this field is a lot number field
+        if (lotNumberLabels.some(label => fieldLabel === label || fieldLabel.includes("lot no"))) {
+          const value = extractedValue.rawValue.trim().toUpperCase();
+          if (value) {
+            lotValuesFound.push({
+              value,
+              pageNumber: extractedValue.source.pageNumber,
+              source: extractedValue.source
+            });
+          }
+        }
+      }
+    }
+
+    // If no lot numbers found, nothing to validate
+    if (lotValuesFound.length === 0) {
+      return null;
+    }
+
+    // Get unique lot number values
+    const uniqueValuesSet = new Set(lotValuesFound.map(b => b.value));
+    const uniqueValues = Array.from(uniqueValuesSet);
+
+    // If only one unique value, all pages are consistent
+    if (uniqueValues.length === 1) {
+      return null;
+    }
+
+    // Multiple different lot numbers found
+    const pagesByValue = new Map<string, number[]>();
+    for (const found of lotValuesFound) {
+      if (!pagesByValue.has(found.value)) {
+        pagesByValue.set(found.value, []);
+      }
+      pagesByValue.get(found.value)!.push(found.pageNumber);
+    }
+
+    const detailLines: string[] = [];
+    Array.from(pagesByValue.entries()).forEach(([value, pages]) => {
+      detailLines.push(`"${value}" on page(s): ${pages.join(", ")}`);
+    });
+
+    return {
+      id: this.generateAlertId(),
+      category: "consistency_error",
+      severity: "high",
+      title: "Lot Number Mismatch",
+      message: `Different lot numbers detected: ${uniqueValues.join(", ")}`,
+      details: detailLines.join("; "),
+      source: lotValuesFound[0]?.source || { 
+        pageNumber: 1, 
+        sectionType: "", 
+        fieldLabel: "Lot No", 
+        boundingBox: { x: 0, y: 0, width: 0, height: 0 }, 
+        surroundingContext: "" 
+      },
+      relatedValues: [],
+      suggestedAction: "Verify correct lot number is recorded consistently throughout document",
+      ruleId: null,
+      formulaId: null,
+      isResolved: false,
+      resolvedBy: null,
+      resolvedAt: null,
+      resolution: null
+    };
   }
 
   private collectTimestamps(pageResults: PageValidationResult[]): ExtractedValue[] {
