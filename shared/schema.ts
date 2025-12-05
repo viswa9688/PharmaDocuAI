@@ -173,7 +173,8 @@ export const alertCategories = [
   "trend_anomaly",
   "consistency_error",
   "format_error",
-  "sop_violation"
+  "sop_violation",
+  "data_quality"
 ] as const;
 
 export type AlertCategory = typeof alertCategories[number];

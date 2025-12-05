@@ -277,7 +277,8 @@ export class ValidationEngine {
       trend_anomaly: 0,
       consistency_error: 0,
       format_error: 0,
-      sop_violation: 0
+      sop_violation: 0,
+      data_quality: 0
     };
 
     for (const alert of allAlerts) {
@@ -911,17 +912,13 @@ export class ValidationEngine {
   private validateCrossPageConsistency(pageResults: PageValidationResult[]): ValidationAlert[] {
     const alerts: ValidationAlert[] = [];
 
-    // Check batch number consistency using form fields directly
-    const batchNumberCheck = this.checkBatchNumberConsistency(pageResults);
-    if (batchNumberCheck) {
-      alerts.push(batchNumberCheck);
-    }
+    // Check batch number consistency using parallel structured + raw text extraction
+    const batchNumberAlerts = this.checkBatchNumberConsistency(pageResults);
+    alerts.push(...batchNumberAlerts);
 
-    // Check lot number consistency using form fields directly  
-    const lotNumberCheck = this.checkLotNumberConsistency(pageResults);
-    if (lotNumberCheck) {
-      alerts.push(lotNumberCheck);
-    }
+    // Check lot number consistency using parallel structured + raw text extraction
+    const lotNumberAlerts = this.checkLotNumberConsistency(pageResults);
+    alerts.push(...lotNumberAlerts);
 
     const timestamps = this.collectTimestamps(pageResults);
     const sequenceErrors = this.validateChronologicalOrder(timestamps);
@@ -1049,76 +1046,208 @@ export class ValidationEngine {
   }
 
   /**
-   * Check if all pages have the same batch number using form fields data AND raw text scanning.
-   * Looks for fields labeled "Batch No", "Batch No.", "Batch Number", etc.
-   * Also handles OCR typos like "Butch No." and detects missing batch numbers.
+   * Check if all pages have the same batch number using BOTH structured form fields AND raw text scanning in parallel.
+   * Reconciles results from both sources to maximize accuracy and detect discrepancies.
+   * 
+   * Source priority:
+   * 1. If both agree → high confidence, use structured (has position data)
+   * 2. If structured has value, raw text empty → use structured
+   * 3. If structured empty, raw text has value → use raw text (text-derived)
+   * 4. If both have DIFFERENT values → reconciliation alert for human review
    */
-  private checkBatchNumberConsistency(pageResults: PageValidationResult[]): ValidationAlert | null {
-    const batchValuesFound: Array<{ value: string; pageNumber: number; source: SourceLocation }> = [];
+  private checkBatchNumberConsistency(pageResults: PageValidationResult[]): ValidationAlert[] {
+    const alerts: ValidationAlert[] = [];
+    
+    // Track batch values with their source type for cross-page comparison
+    const batchValuesFound: Array<{ 
+      value: string; 
+      pageNumber: number; 
+      source: SourceLocation;
+      sourceType: "structured" | "text-derived";
+      confidence: "high" | "medium" | "low";
+    }> = [];
     const emptyBatchFields: Array<{ pageNumber: number; source: SourceLocation; label: string }> = [];
+    const reconciliationIssues: Array<{ 
+      pageNumber: number; 
+      structuredValue: string; 
+      textValue: string;
+      structuredLabel: string;
+      textLabel: string;
+    }> = [];
 
     for (const page of pageResults) {
-      let foundBatchOnPage = false;
+      // === PARALLEL EXTRACTION: Run BOTH sources for every page ===
       
-      // First, check structured form fields
+      // Source 1: Structured form fields
+      let structuredResult: { value: string; label: string; source: SourceLocation } | null = null;
       for (const extractedValue of page.extractedValues) {
         const fieldLabel = extractedValue.source.fieldLabel;
-        
-        // Check if this field is a batch number field (with OCR typo handling)
         if (this.isBatchNumberField(fieldLabel)) {
-          foundBatchOnPage = true;
-          const value = extractedValue.rawValue.trim().toUpperCase();
-          if (value) {
-            batchValuesFound.push({
-              value,
-              pageNumber: extractedValue.source.pageNumber,
-              source: extractedValue.source
-            });
-          } else {
-            // Track batch number fields with empty values
-            emptyBatchFields.push({
-              pageNumber: extractedValue.source.pageNumber,
-              source: extractedValue.source,
-              label: fieldLabel
-            });
-          }
+          structuredResult = {
+            value: extractedValue.rawValue.trim().toUpperCase(),
+            label: fieldLabel,
+            source: extractedValue.source
+          };
+          break; // Use first batch field found in structured data
         }
       }
       
-      // If no batch field found in form fields, scan raw text
-      if (!foundBatchOnPage && page.extractedText) {
-        const textResult = this.scanTextForBatchNumber(page.extractedText, page.pageNumber);
-        if (textResult) {
-          const defaultSource: SourceLocation = {
-            pageNumber: page.pageNumber,
-            sectionType: "",
-            fieldLabel: textResult.label,
-            boundingBox: { x: 0, y: 0, width: 0, height: 0 },
-            surroundingContext: `Found in raw text: "${textResult.label}"`
+      // Source 2: Raw text scanning (always run, not just as fallback)
+      let textResult: { value: string; label: string } | null = null;
+      if (page.extractedText) {
+        const scanned = this.scanTextForBatchNumber(page.extractedText, page.pageNumber);
+        if (scanned) {
+          textResult = {
+            value: scanned.value.toUpperCase(),
+            label: scanned.label
           };
-          
-          if (textResult.value) {
-            batchValuesFound.push({
-              value: textResult.value.toUpperCase(),
-              pageNumber: page.pageNumber,
-              source: defaultSource
-            });
-          } else {
-            // Batch label found in text but no value
-            emptyBatchFields.push({
-              pageNumber: page.pageNumber,
-              source: defaultSource,
-              label: textResult.label
-            });
-          }
         }
       }
+      
+      // === RECONCILIATION: Compare and decide ===
+      const textSource: SourceLocation = {
+        pageNumber: page.pageNumber,
+        sectionType: "",
+        fieldLabel: textResult?.label || "Batch No",
+        boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+        surroundingContext: `Found in raw text: "${textResult?.label || ""}"`
+      };
+      
+      if (structuredResult && textResult) {
+        // Both sources found batch labels
+        const structuredHasValue = !!structuredResult.value;
+        const textHasValue = !!textResult.value;
+        
+        if (structuredHasValue && textHasValue) {
+          // Both have values - compare them
+          if (structuredResult.value === textResult.value) {
+            // MATCH: High confidence - both sources agree
+            batchValuesFound.push({
+              value: structuredResult.value,
+              pageNumber: page.pageNumber,
+              source: structuredResult.source,
+              sourceType: "structured",
+              confidence: "high"
+            });
+          } else {
+            // MISMATCH: Reconciliation needed - flag for human review
+            reconciliationIssues.push({
+              pageNumber: page.pageNumber,
+              structuredValue: structuredResult.value,
+              textValue: textResult.value,
+              structuredLabel: structuredResult.label,
+              textLabel: textResult.label
+            });
+            // Still add structured value for cross-page comparison but mark as low confidence
+            batchValuesFound.push({
+              value: structuredResult.value,
+              pageNumber: page.pageNumber,
+              source: structuredResult.source,
+              sourceType: "structured",
+              confidence: "low"
+            });
+          }
+        } else if (structuredHasValue) {
+          // Only structured has value - use it
+          batchValuesFound.push({
+            value: structuredResult.value,
+            pageNumber: page.pageNumber,
+            source: structuredResult.source,
+            sourceType: "structured",
+            confidence: "medium"
+          });
+        } else if (textHasValue) {
+          // Only raw text has value - use it as text-derived
+          batchValuesFound.push({
+            value: textResult.value,
+            pageNumber: page.pageNumber,
+            source: { ...textSource, surroundingContext: `Text-derived from: "${textResult.label}"` },
+            sourceType: "text-derived",
+            confidence: "medium"
+          });
+        } else {
+          // Both labels found but both empty - missing value
+          emptyBatchFields.push({
+            pageNumber: page.pageNumber,
+            source: structuredResult.source,
+            label: structuredResult.label
+          });
+        }
+      } else if (structuredResult) {
+        // Only structured source found
+        if (structuredResult.value) {
+          batchValuesFound.push({
+            value: structuredResult.value,
+            pageNumber: page.pageNumber,
+            source: structuredResult.source,
+            sourceType: "structured",
+            confidence: "medium"
+          });
+        } else {
+          emptyBatchFields.push({
+            pageNumber: page.pageNumber,
+            source: structuredResult.source,
+            label: structuredResult.label
+          });
+        }
+      } else if (textResult) {
+        // Only raw text source found
+        if (textResult.value) {
+          batchValuesFound.push({
+            value: textResult.value,
+            pageNumber: page.pageNumber,
+            source: textSource,
+            sourceType: "text-derived",
+            confidence: "medium"
+          });
+        } else {
+          emptyBatchFields.push({
+            pageNumber: page.pageNumber,
+            source: textSource,
+            label: textResult.label
+          });
+        }
+      }
+      // If neither source found batch labels, page has no batch field - skip
     }
 
-    // If batch number fields are found but all are empty, generate missing value alert
+    // === GENERATE ALERTS ===
+    
+    // Alert 1: Reconciliation issues (structured vs text disagreement)
+    if (reconciliationIssues.length > 0) {
+      const details = reconciliationIssues.map(issue => 
+        `Page ${issue.pageNumber}: Structured field "${issue.structuredLabel}" = "${issue.structuredValue}" vs Raw text "${issue.textLabel}" = "${issue.textValue}"`
+      ).join("; ");
+      
+      alerts.push({
+        id: this.generateAlertId(),
+        category: "data_quality",
+        severity: "high",
+        title: "Batch Number Extraction Discrepancy",
+        message: `Structured form extraction and raw text scanning found different batch numbers on ${reconciliationIssues.length} page(s). Manual verification required.`,
+        details,
+        source: reconciliationIssues[0] ? {
+          pageNumber: reconciliationIssues[0].pageNumber,
+          sectionType: "",
+          fieldLabel: reconciliationIssues[0].structuredLabel,
+          boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+          surroundingContext: "Reconciliation needed between extraction methods"
+        } : { pageNumber: 1, sectionType: "", fieldLabel: "Batch No", boundingBox: { x: 0, y: 0, width: 0, height: 0 }, surroundingContext: "" },
+        relatedValues: [],
+        suggestedAction: "Review the original document to determine the correct batch number. The discrepancy may indicate OCR errors or form parsing issues.",
+        ruleId: null,
+        formulaId: null,
+        isResolved: false,
+        resolvedBy: null,
+        resolvedAt: null,
+        resolution: null
+      });
+    }
+
+    // Alert 2: Missing batch numbers
     if (batchValuesFound.length === 0 && emptyBatchFields.length > 0) {
       const pagesWithEmptyBatch = Array.from(new Set(emptyBatchFields.map(f => f.pageNumber)));
-      return {
+      alerts.push({
         id: this.generateAlertId(),
         category: "missing_value",
         severity: "critical",
@@ -1134,61 +1263,65 @@ export class ValidationEngine {
         resolvedBy: null,
         resolvedAt: null,
         resolution: null
-      };
+      });
     }
 
-    // If no batch number fields found at all, nothing to validate
-    if (batchValuesFound.length === 0) {
-      return null;
-    }
+    // Alert 3: Cross-page consistency check
+    if (batchValuesFound.length > 0) {
+      const uniqueValuesSet = new Set(batchValuesFound.map(b => b.value));
+      const uniqueValues = Array.from(uniqueValuesSet);
 
-    // Get unique batch number values
-    const uniqueValuesSet = new Set(batchValuesFound.map(b => b.value));
-    const uniqueValues = Array.from(uniqueValuesSet);
+      if (uniqueValues.length > 1) {
+        // Multiple different batch numbers - check if it's just confidence-related
+        const highConfidenceValues = batchValuesFound.filter(b => b.confidence === "high");
+        const uniqueHighConfidence = new Set(highConfidenceValues.map(b => b.value));
+        
+        // Build details with source type indicators
+        const pagesByValue = new Map<string, Array<{ page: number; sourceType: string; confidence: string }>>();
+        for (const found of batchValuesFound) {
+          if (!pagesByValue.has(found.value)) {
+            pagesByValue.set(found.value, []);
+          }
+          pagesByValue.get(found.value)!.push({ 
+            page: found.pageNumber, 
+            sourceType: found.sourceType,
+            confidence: found.confidence
+          });
+        }
 
-    // If only one unique value, all pages are consistent
-    if (uniqueValues.length === 1) {
-      return null;
-    }
+        const detailLines: string[] = [];
+        Array.from(pagesByValue.entries()).forEach(([value, entries]) => {
+          const pageInfo = entries.map(e => `${e.page} (${e.sourceType}, ${e.confidence})`).join(", ");
+          detailLines.push(`"${value}" on page(s): ${pageInfo}`);
+        });
 
-    // Multiple different batch numbers found - this is a critical error
-    // Could indicate pages from different documents were mixed together
-    const pagesByValue = new Map<string, number[]>();
-    for (const found of batchValuesFound) {
-      if (!pagesByValue.has(found.value)) {
-        pagesByValue.set(found.value, []);
+        alerts.push({
+          id: this.generateAlertId(),
+          category: "consistency_error",
+          severity: "critical",
+          title: "Batch Number Mismatch - Possible Mixed Documents",
+          message: `Different batch numbers detected: ${uniqueValues.join(", ")}. This may indicate pages from different documents were accidentally combined.`,
+          details: detailLines.join("; "),
+          source: batchValuesFound[0]?.source || { 
+            pageNumber: 1, 
+            sectionType: "", 
+            fieldLabel: "Batch No", 
+            boundingBox: { x: 0, y: 0, width: 0, height: 0 }, 
+            surroundingContext: "" 
+          },
+          relatedValues: [],
+          suggestedAction: "Review document to ensure all pages belong to the same batch. Separate pages if documents were mixed.",
+          ruleId: null,
+          formulaId: null,
+          isResolved: false,
+          resolvedBy: null,
+          resolvedAt: null,
+          resolution: null
+        });
       }
-      pagesByValue.get(found.value)!.push(found.pageNumber);
     }
 
-    const detailLines: string[] = [];
-    Array.from(pagesByValue.entries()).forEach(([value, pages]) => {
-      detailLines.push(`"${value}" on page(s): ${pages.join(", ")}`);
-    });
-
-    return {
-      id: this.generateAlertId(),
-      category: "consistency_error",
-      severity: "critical",
-      title: "Batch Number Mismatch - Possible Mixed Documents",
-      message: `Different batch numbers detected: ${uniqueValues.join(", ")}. This may indicate pages from different documents were accidentally combined.`,
-      details: detailLines.join("; "),
-      source: batchValuesFound[0]?.source || { 
-        pageNumber: 1, 
-        sectionType: "", 
-        fieldLabel: "Batch No", 
-        boundingBox: { x: 0, y: 0, width: 0, height: 0 }, 
-        surroundingContext: "" 
-      },
-      relatedValues: [],
-      suggestedAction: "Review document to ensure all pages belong to the same batch. Separate pages if documents were mixed.",
-      ruleId: null,
-      formulaId: null,
-      isResolved: false,
-      resolvedBy: null,
-      resolvedAt: null,
-      resolution: null
-    };
+    return alerts;
   }
 
   /**
@@ -1306,70 +1439,194 @@ export class ValidationEngine {
     return null;
   }
 
-  private checkLotNumberConsistency(pageResults: PageValidationResult[]): ValidationAlert | null {
-    const lotValuesFound: Array<{ value: string; pageNumber: number; source: SourceLocation }> = [];
+  /**
+   * Check if all pages have the same lot number using BOTH structured form fields AND raw text scanning in parallel.
+   * Reconciles results from both sources to maximize accuracy and detect discrepancies.
+   */
+  private checkLotNumberConsistency(pageResults: PageValidationResult[]): ValidationAlert[] {
+    const alerts: ValidationAlert[] = [];
+    
+    // Track lot values with their source type for cross-page comparison
+    const lotValuesFound: Array<{ 
+      value: string; 
+      pageNumber: number; 
+      source: SourceLocation;
+      sourceType: "structured" | "text-derived";
+      confidence: "high" | "medium" | "low";
+    }> = [];
     const emptyLotFields: Array<{ pageNumber: number; source: SourceLocation; label: string }> = [];
+    const reconciliationIssues: Array<{ 
+      pageNumber: number; 
+      structuredValue: string; 
+      textValue: string;
+      structuredLabel: string;
+      textLabel: string;
+    }> = [];
 
     for (const page of pageResults) {
-      let foundLotOnPage = false;
+      // === PARALLEL EXTRACTION: Run BOTH sources for every page ===
       
-      // First, check structured form fields
+      // Source 1: Structured form fields
+      let structuredResult: { value: string; label: string; source: SourceLocation } | null = null;
       for (const extractedValue of page.extractedValues) {
         const fieldLabel = extractedValue.source.fieldLabel;
-        
-        // Check if this field is a lot number field (with OCR typo handling)
         if (this.isLotNumberField(fieldLabel)) {
-          foundLotOnPage = true;
-          const value = extractedValue.rawValue.trim().toUpperCase();
-          if (value) {
-            lotValuesFound.push({
-              value,
-              pageNumber: extractedValue.source.pageNumber,
-              source: extractedValue.source
-            });
-          } else {
-            emptyLotFields.push({
-              pageNumber: extractedValue.source.pageNumber,
-              source: extractedValue.source,
-              label: fieldLabel
-            });
-          }
+          structuredResult = {
+            value: extractedValue.rawValue.trim().toUpperCase(),
+            label: fieldLabel,
+            source: extractedValue.source
+          };
+          break;
         }
       }
       
-      // If no lot field found in form fields, scan raw text
-      if (!foundLotOnPage && page.extractedText) {
-        const textResult = this.scanTextForLotNumber(page.extractedText, page.pageNumber);
-        if (textResult) {
-          const defaultSource: SourceLocation = {
-            pageNumber: page.pageNumber,
-            sectionType: "",
-            fieldLabel: textResult.label,
-            boundingBox: { x: 0, y: 0, width: 0, height: 0 },
-            surroundingContext: `Found in raw text: "${textResult.label}"`
+      // Source 2: Raw text scanning (always run, not just as fallback)
+      let textResult: { value: string; label: string } | null = null;
+      if (page.extractedText) {
+        const scanned = this.scanTextForLotNumber(page.extractedText, page.pageNumber);
+        if (scanned) {
+          textResult = {
+            value: scanned.value.toUpperCase(),
+            label: scanned.label
           };
-          
-          if (textResult.value) {
+        }
+      }
+      
+      // === RECONCILIATION: Compare and decide ===
+      const textSource: SourceLocation = {
+        pageNumber: page.pageNumber,
+        sectionType: "",
+        fieldLabel: textResult?.label || "Lot No",
+        boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+        surroundingContext: `Found in raw text: "${textResult?.label || ""}"`
+      };
+      
+      if (structuredResult && textResult) {
+        const structuredHasValue = !!structuredResult.value;
+        const textHasValue = !!textResult.value;
+        
+        if (structuredHasValue && textHasValue) {
+          if (structuredResult.value === textResult.value) {
+            // MATCH: High confidence
             lotValuesFound.push({
-              value: textResult.value.toUpperCase(),
+              value: structuredResult.value,
               pageNumber: page.pageNumber,
-              source: defaultSource
+              source: structuredResult.source,
+              sourceType: "structured",
+              confidence: "high"
             });
           } else {
-            emptyLotFields.push({
+            // MISMATCH: Reconciliation needed
+            reconciliationIssues.push({
               pageNumber: page.pageNumber,
-              source: defaultSource,
-              label: textResult.label
+              structuredValue: structuredResult.value,
+              textValue: textResult.value,
+              structuredLabel: structuredResult.label,
+              textLabel: textResult.label
+            });
+            lotValuesFound.push({
+              value: structuredResult.value,
+              pageNumber: page.pageNumber,
+              source: structuredResult.source,
+              sourceType: "structured",
+              confidence: "low"
             });
           }
+        } else if (structuredHasValue) {
+          lotValuesFound.push({
+            value: structuredResult.value,
+            pageNumber: page.pageNumber,
+            source: structuredResult.source,
+            sourceType: "structured",
+            confidence: "medium"
+          });
+        } else if (textHasValue) {
+          lotValuesFound.push({
+            value: textResult.value,
+            pageNumber: page.pageNumber,
+            source: { ...textSource, surroundingContext: `Text-derived from: "${textResult.label}"` },
+            sourceType: "text-derived",
+            confidence: "medium"
+          });
+        } else {
+          emptyLotFields.push({
+            pageNumber: page.pageNumber,
+            source: structuredResult.source,
+            label: structuredResult.label
+          });
+        }
+      } else if (structuredResult) {
+        if (structuredResult.value) {
+          lotValuesFound.push({
+            value: structuredResult.value,
+            pageNumber: page.pageNumber,
+            source: structuredResult.source,
+            sourceType: "structured",
+            confidence: "medium"
+          });
+        } else {
+          emptyLotFields.push({
+            pageNumber: page.pageNumber,
+            source: structuredResult.source,
+            label: structuredResult.label
+          });
+        }
+      } else if (textResult) {
+        if (textResult.value) {
+          lotValuesFound.push({
+            value: textResult.value,
+            pageNumber: page.pageNumber,
+            source: textSource,
+            sourceType: "text-derived",
+            confidence: "medium"
+          });
+        } else {
+          emptyLotFields.push({
+            pageNumber: page.pageNumber,
+            source: textSource,
+            label: textResult.label
+          });
         }
       }
     }
 
-    // If lot number fields are found but all are empty, generate missing value alert
+    // === GENERATE ALERTS ===
+    
+    // Alert 1: Reconciliation issues
+    if (reconciliationIssues.length > 0) {
+      const details = reconciliationIssues.map(issue => 
+        `Page ${issue.pageNumber}: Structured "${issue.structuredLabel}" = "${issue.structuredValue}" vs Raw text "${issue.textLabel}" = "${issue.textValue}"`
+      ).join("; ");
+      
+      alerts.push({
+        id: this.generateAlertId(),
+        category: "data_quality",
+        severity: "high",
+        title: "Lot Number Extraction Discrepancy",
+        message: `Structured form extraction and raw text scanning found different lot numbers on ${reconciliationIssues.length} page(s). Manual verification required.`,
+        details,
+        source: reconciliationIssues[0] ? {
+          pageNumber: reconciliationIssues[0].pageNumber,
+          sectionType: "",
+          fieldLabel: reconciliationIssues[0].structuredLabel,
+          boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+          surroundingContext: "Reconciliation needed between extraction methods"
+        } : { pageNumber: 1, sectionType: "", fieldLabel: "Lot No", boundingBox: { x: 0, y: 0, width: 0, height: 0 }, surroundingContext: "" },
+        relatedValues: [],
+        suggestedAction: "Review the original document to determine the correct lot number.",
+        ruleId: null,
+        formulaId: null,
+        isResolved: false,
+        resolvedBy: null,
+        resolvedAt: null,
+        resolution: null
+      });
+    }
+
+    // Alert 2: Missing lot numbers
     if (lotValuesFound.length === 0 && emptyLotFields.length > 0) {
       const pagesWithEmptyLot = Array.from(new Set(emptyLotFields.map(f => f.pageNumber)));
-      return {
+      alerts.push({
         id: this.generateAlertId(),
         category: "missing_value",
         severity: "high",
@@ -1385,60 +1642,60 @@ export class ValidationEngine {
         resolvedBy: null,
         resolvedAt: null,
         resolution: null
-      };
+      });
     }
 
-    // If no lot numbers found, nothing to validate
-    if (lotValuesFound.length === 0) {
-      return null;
-    }
+    // Alert 3: Cross-page consistency check
+    if (lotValuesFound.length > 0) {
+      const uniqueValuesSet = new Set(lotValuesFound.map(b => b.value));
+      const uniqueValues = Array.from(uniqueValuesSet);
 
-    // Get unique lot number values
-    const uniqueValuesSet = new Set(lotValuesFound.map(b => b.value));
-    const uniqueValues = Array.from(uniqueValuesSet);
+      if (uniqueValues.length > 1) {
+        const pagesByValue = new Map<string, Array<{ page: number; sourceType: string; confidence: string }>>();
+        for (const found of lotValuesFound) {
+          if (!pagesByValue.has(found.value)) {
+            pagesByValue.set(found.value, []);
+          }
+          pagesByValue.get(found.value)!.push({ 
+            page: found.pageNumber, 
+            sourceType: found.sourceType,
+            confidence: found.confidence
+          });
+        }
 
-    // If only one unique value, all pages are consistent
-    if (uniqueValues.length === 1) {
-      return null;
-    }
+        const detailLines: string[] = [];
+        Array.from(pagesByValue.entries()).forEach(([value, entries]) => {
+          const pageInfo = entries.map(e => `${e.page} (${e.sourceType}, ${e.confidence})`).join(", ");
+          detailLines.push(`"${value}" on page(s): ${pageInfo}`);
+        });
 
-    // Multiple different lot numbers found
-    const pagesByValue = new Map<string, number[]>();
-    for (const found of lotValuesFound) {
-      if (!pagesByValue.has(found.value)) {
-        pagesByValue.set(found.value, []);
+        alerts.push({
+          id: this.generateAlertId(),
+          category: "consistency_error",
+          severity: "high",
+          title: "Lot Number Mismatch",
+          message: `Different lot numbers detected: ${uniqueValues.join(", ")}`,
+          details: detailLines.join("; "),
+          source: lotValuesFound[0]?.source || { 
+            pageNumber: 1, 
+            sectionType: "", 
+            fieldLabel: "Lot No", 
+            boundingBox: { x: 0, y: 0, width: 0, height: 0 }, 
+            surroundingContext: "" 
+          },
+          relatedValues: [],
+          suggestedAction: "Verify correct lot number is recorded consistently throughout document",
+          ruleId: null,
+          formulaId: null,
+          isResolved: false,
+          resolvedBy: null,
+          resolvedAt: null,
+          resolution: null
+        });
       }
-      pagesByValue.get(found.value)!.push(found.pageNumber);
     }
 
-    const detailLines: string[] = [];
-    Array.from(pagesByValue.entries()).forEach(([value, pages]) => {
-      detailLines.push(`"${value}" on page(s): ${pages.join(", ")}`);
-    });
-
-    return {
-      id: this.generateAlertId(),
-      category: "consistency_error",
-      severity: "high",
-      title: "Lot Number Mismatch",
-      message: `Different lot numbers detected: ${uniqueValues.join(", ")}`,
-      details: detailLines.join("; "),
-      source: lotValuesFound[0]?.source || { 
-        pageNumber: 1, 
-        sectionType: "", 
-        fieldLabel: "Lot No", 
-        boundingBox: { x: 0, y: 0, width: 0, height: 0 }, 
-        surroundingContext: "" 
-      },
-      relatedValues: [],
-      suggestedAction: "Verify correct lot number is recorded consistently throughout document",
-      ruleId: null,
-      formulaId: null,
-      isResolved: false,
-      resolvedBy: null,
-      resolvedAt: null,
-      resolution: null
-    };
+    return alerts;
   }
 
   private collectTimestamps(pageResults: PageValidationResult[]): ExtractedValue[] {

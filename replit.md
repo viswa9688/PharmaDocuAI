@@ -33,6 +33,7 @@ The system is built on a React, Express, PostgreSQL, and TypeScript stack.
     - **PDF Processing**: Extracts pages and generates high-resolution PNG images (scale: 2) for viewing.
     - **Secure Image Serving**: Implements hardened path validation to prevent directory traversal vulnerabilities.
     - **Raw Text Scanning**: Enhanced detection of batch/lot numbers from raw OCR text, handling typos, multi-line layouts, and generating alerts for missing values.
+    - **Parallel Extraction with Reconciliation**: For batch/lot number validation, runs BOTH structured form field extraction AND raw text scanning in parallel. If both agree, high confidence. If they disagree, generates "Data Quality" reconciliation alert for human review. Results include sourceType ("structured" or "text-derived") and confidence level ("high", "medium", "low").
     - **Metadata Storage**: Rich extraction and layout data are stored in PostgreSQL using JSONB fields.
 
 ### System Design Choices

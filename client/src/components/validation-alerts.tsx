@@ -48,7 +48,8 @@ const categoryConfig: Record<AlertCategory, { icon: typeof Calculator; label: st
   trend_anomaly: { icon: Activity, label: "Trend Anomaly" },
   consistency_error: { icon: AlertTriangle, label: "Consistency Error" },
   format_error: { icon: FileWarning, label: "Format Error" },
-  sop_violation: { icon: AlertTriangle, label: "SOP Violation" }
+  sop_violation: { icon: AlertTriangle, label: "SOP Violation" },
+  data_quality: { icon: AlertCircle, label: "Data Quality" }
 };
 
 export function ValidationAlerts({ documentId, onPageClick }: ValidationAlertsProps) {
