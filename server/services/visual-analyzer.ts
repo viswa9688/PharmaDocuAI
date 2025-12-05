@@ -42,7 +42,7 @@ interface ColorRegion {
 
 export class VisualAnalyzer {
   private thumbnailDir: string;
-  private minLineLength: number = 30;
+  private minLineLength: number = 50; // Increased minimum - real strike-throughs are usually longer
   private lineAngleTolerance: number = 15;
 
   constructor(thumbnailDir: string = 'uploads/thumbnails') {
@@ -83,9 +83,20 @@ export class VisualAnalyzer {
       ctx.drawImage(img, 0, 0);
       const imageData = ctx.getImageData(0, 0, width, height);
 
+      // Build layout mask from text regions to identify form structure borders
+      const layoutMask = this.buildLayoutMask(textRegions, width, height);
+
       const lines = await this.detectStrikethroughLines(imageData, width, height);
-      for (const line of lines) {
-        const affectedRegions = this.findAffectedTextRegions(line, textRegions);
+      
+      // Filter out lines that are part of form structure (table borders, cell edges)
+      const filteredLines = this.filterFormStructureLines(lines, textRegions, layoutMask, width);
+      
+      // Further filter: remove lines that form grid patterns (repeating at regular intervals)
+      const nonGridLines = this.filterGridPatternLines(filteredLines);
+
+      for (const line of nonGridLines) {
+        // Use stricter intersection check with midline and width coverage requirements
+        const affectedRegions = this.findAffectedTextRegionsStrict(line, textRegions);
         
         for (const region of affectedRegions) {
           const anomalyId = `strike_${documentId}_p${pageNumber}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -414,6 +425,218 @@ export class VisualAnalyzer {
 
       return (isNearlyHorizontal || isNearlyDiagonal) && hasGoodLength && hasReasonableThickness;
     });
+  }
+
+  /**
+   * Build a layout mask identifying form structure borders
+   * Lines at cell edges (top/bottom boundaries) are likely form borders, not strike-throughs
+   */
+  private buildLayoutMask(textRegions: BoundingBox[], imageWidth: number, imageHeight: number): Set<number> {
+    const borderMask = new Set<number>();
+    const borderThickness = 5; // pixels tolerance for border detection
+
+    for (const region of textRegions) {
+      // Mark top edge of each text region as potential form border
+      const topY = Math.floor(region.y);
+      for (let dy = -borderThickness; dy <= borderThickness; dy++) {
+        const y = topY + dy;
+        if (y >= 0 && y < imageHeight) {
+          for (let x = Math.floor(region.x); x < Math.floor(region.x + region.width); x++) {
+            if (x >= 0 && x < imageWidth) {
+              borderMask.add(y * imageWidth + x);
+            }
+          }
+        }
+      }
+
+      // Mark bottom edge of each text region as potential form border
+      const bottomY = Math.floor(region.y + region.height);
+      for (let dy = -borderThickness; dy <= borderThickness; dy++) {
+        const y = bottomY + dy;
+        if (y >= 0 && y < imageHeight) {
+          for (let x = Math.floor(region.x); x < Math.floor(region.x + region.width); x++) {
+            if (x >= 0 && x < imageWidth) {
+              borderMask.add(y * imageWidth + x);
+            }
+          }
+        }
+      }
+    }
+
+    return borderMask;
+  }
+
+  /**
+   * Filter out lines that align with form structure (table/cell borders)
+   * Note: We intentionally do NOT filter by line length - real strike-throughs can span
+   * wide fields (long comments, signature lines, multi-column entries)
+   */
+  private filterFormStructureLines(
+    lines: DetectedLine[],
+    textRegions: BoundingBox[],
+    layoutMask: Set<number>,
+    imageWidth: number
+  ): DetectedLine[] {
+    return lines.filter(line => {
+      // Check 1: Skip lines whose Y coordinate aligns with cell edges
+      // Sample points along the line to check if they fall on the layout mask
+      let borderPixelCount = 0;
+      const sampleCount = Math.min(20, Math.floor(line.length / 5));
+      
+      for (let i = 0; i <= sampleCount; i++) {
+        const t = sampleCount > 0 ? i / sampleCount : 0;
+        const x = Math.floor(line.x1 + t * (line.x2 - line.x1));
+        const y = Math.floor(line.y1 + t * (line.y2 - line.y1));
+        const idx = y * imageWidth + x;
+        
+        if (layoutMask.has(idx)) {
+          borderPixelCount++;
+        }
+      }
+
+      // If >60% of line samples fall on form borders, it's likely a table border
+      const borderRatio = borderPixelCount / (sampleCount + 1);
+      if (borderRatio > 0.6) {
+        return false;
+      }
+
+      // Check 2: Skip purely horizontal lines at exactly text region boundaries
+      if (Math.abs(line.angle) < 3) { // Nearly perfectly horizontal
+        const lineY = line.y1;
+        
+        for (const region of textRegions) {
+          const regionTop = region.y;
+          const regionBottom = region.y + region.height;
+          
+          // Line is within 3 pixels of a region's top or bottom edge
+          if (Math.abs(lineY - regionTop) < 3 || Math.abs(lineY - regionBottom) < 3) {
+            // And the line spans most of the region width
+            const lineLeft = Math.min(line.x1, line.x2);
+            const lineRight = Math.max(line.x1, line.x2);
+            const overlap = Math.min(lineRight, region.x + region.width) - Math.max(lineLeft, region.x);
+            
+            if (overlap > region.width * 0.7) {
+              return false; // This is likely a cell border
+            }
+          }
+        }
+      }
+
+      return true;
+    });
+  }
+
+  /**
+   * Filter out lines that form grid patterns (regular spacing = table structure)
+   */
+  private filterGridPatternLines(lines: DetectedLine[]): DetectedLine[] {
+    if (lines.length < 3) return lines;
+
+    // Group horizontal lines by Y coordinate (within tolerance)
+    const horizontalLines = lines.filter(l => Math.abs(l.angle) < 10);
+    const yCoords = horizontalLines.map(l => l.y1).sort((a, b) => a - b);
+    
+    if (yCoords.length < 3) return lines;
+
+    // Calculate spacing between consecutive lines
+    const spacings: number[] = [];
+    for (let i = 1; i < yCoords.length; i++) {
+      spacings.push(yCoords[i] - yCoords[i - 1]);
+    }
+
+    // Check if spacings are regular (typical of table rows)
+    const avgSpacing = spacings.reduce((a, b) => a + b, 0) / spacings.length;
+    const regularSpacingCount = spacings.filter(s => Math.abs(s - avgSpacing) < avgSpacing * 0.15).length;
+    
+    // If >70% of spacings are regular, these are likely table row borders
+    if (regularSpacingCount / spacings.length > 0.7 && horizontalLines.length > 4) {
+      // Remove all the regular-spaced horizontal lines (they're table borders)
+      const gridYCoordsArray = yCoords;
+      return lines.filter(l => {
+        if (Math.abs(l.angle) >= 10) return true; // Keep non-horizontal lines
+        
+        // Check if this line's Y is part of the grid pattern
+        for (let i = 0; i < gridYCoordsArray.length; i++) {
+          if (Math.abs(l.y1 - gridYCoordsArray[i]) < 5) {
+            return false; // Part of grid pattern, filter out
+          }
+        }
+        return true;
+      });
+    }
+
+    return lines;
+  }
+
+  /**
+   * Stricter version of findAffectedTextRegions with midline intersection and width coverage checks
+   * A true strike-through must:
+   * 1. Cross through the middle 30% of text height (35-65% of box height)
+   * 2. Span at least 40% of the text box width
+   */
+  private findAffectedTextRegionsStrict(line: DetectedLine, textRegions: BoundingBox[]): BoundingBox[] {
+    const affected: BoundingBox[] = [];
+
+    for (const region of textRegions) {
+      if (this.doesLineIntersectBoxStrict(line, region)) {
+        affected.push(region);
+      }
+    }
+
+    return affected;
+  }
+
+  /**
+   * Strict intersection check requiring midline crossing and width coverage
+   */
+  private doesLineIntersectBoxStrict(line: DetectedLine, box: BoundingBox): boolean {
+    const boxTop = box.y;
+    const boxBottom = box.y + box.height;
+    const boxLeft = box.x;
+    const boxRight = box.x + box.width;
+
+    const lineLeft = Math.min(line.x1, line.x2);
+    const lineRight = Math.max(line.x1, line.x2);
+    const lineTop = Math.min(line.y1, line.y2);
+    const lineBottom = Math.max(line.y1, line.y2);
+
+    // Check 1: Basic bounding box overlap
+    const horizontalOverlap = lineLeft < boxRight && lineRight > boxLeft;
+    const verticalOverlap = lineTop < boxBottom && lineBottom > boxTop;
+    if (!horizontalOverlap || !verticalOverlap) return false;
+
+    // Check 2: Line must span at least 40% of text box width
+    const overlapLeft = Math.max(lineLeft, boxLeft);
+    const overlapRight = Math.min(lineRight, boxRight);
+    const widthCoverage = (overlapRight - overlapLeft) / box.width;
+    if (widthCoverage < 0.4) return false;
+
+    // Check 3: Line must cross through the middle 30% of the text box (35-65% height)
+    // This is the key discriminator - form borders run at edges, strike-throughs cross centers
+    const midlineTop = boxTop + box.height * 0.35;
+    const midlineBottom = boxTop + box.height * 0.65;
+
+    if (Math.abs(line.angle) < 15) {
+      // For horizontal lines, the Y coordinate must fall in the middle band
+      const lineY = (line.y1 + line.y2) / 2;
+      if (lineY < midlineTop || lineY > midlineBottom) return false;
+    } else {
+      // For diagonal lines, at least part of the line must cross the middle band
+      // Calculate Y values where line intersects the box's left and right edges
+      if (line.x2 === line.x1) return false; // Avoid division by zero
+      
+      const slope = (line.y2 - line.y1) / (line.x2 - line.x1);
+      const yAtBoxLeft = line.y1 + slope * (boxLeft - line.x1);
+      const yAtBoxRight = line.y1 + slope * (boxRight - line.x1);
+      
+      const lineMinY = Math.min(yAtBoxLeft, yAtBoxRight);
+      const lineMaxY = Math.max(yAtBoxLeft, yAtBoxRight);
+      
+      // Check if line's Y range within the box overlaps with the midline band
+      if (lineMaxY < midlineTop || lineMinY > midlineBottom) return false;
+    }
+
+    return true;
   }
 
   private async detectRedInkRegions(
