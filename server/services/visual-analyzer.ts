@@ -83,20 +83,17 @@ export class VisualAnalyzer {
       ctx.drawImage(img, 0, 0);
       const imageData = ctx.getImageData(0, 0, width, height);
 
-      // Build layout mask from text regions to identify form structure borders
-      const layoutMask = this.buildLayoutMask(textRegions, width, height);
+      // BALANCED APPROACH: Detect high-confidence anomalies with smart filtering
+      // 1. Diagonal lines (always suspicious - form structure is horizontal/vertical)
+      // 2. Horizontal lines that cross through TEXT CONTENT (not at edges/baseline)
+      // 3. Red ink marks (clear correction signal)
+      // 4. Erasures with local contrast anomalies
 
-      const lines = await this.detectStrikethroughLines(imageData, width, height);
+      // Step 1: Detect diagonal strike-throughs (high confidence)
+      const diagonalLines = await this.detectDiagonalStrikethroughsOnly(imageData, width, height);
       
-      // Filter out lines that are part of form structure (table borders, cell edges)
-      const filteredLines = this.filterFormStructureLines(lines, textRegions, layoutMask, width);
-      
-      // Further filter: remove lines that form grid patterns (repeating at regular intervals)
-      const nonGridLines = this.filterGridPatternLines(filteredLines);
-
-      for (const line of nonGridLines) {
-        // Use stricter intersection check with midline and width coverage requirements
-        const affectedRegions = this.findAffectedTextRegionsStrict(line, textRegions);
+      for (const line of diagonalLines) {
+        const affectedRegions = this.findAffectedTextRegions(line, textRegions);
         
         for (const region of affectedRegions) {
           const anomalyId = `strike_${documentId}_p${pageNumber}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -109,24 +106,55 @@ export class VisualAnalyzer {
           anomalies.push({
             id: anomalyId,
             type: 'strike_through',
-            confidence: 85,
+            confidence: 90,
             pageNumber,
             boundingBox: this.lineToBoundingBox(line),
             affectedTextRegion: region,
             affectedText: null,
             thumbnailPath,
             severity: 'high',
-            description: `Strike-through line detected crossing text region`,
+            description: `Diagonal strike-through line detected crossing text region`,
             detectionMethod: 'line_detection',
           });
         }
       }
 
+      // Step 2: Detect horizontal lines that cross through text content
+      const horizontalLines = await this.detectHorizontalStrikethroughs(imageData, width, height, textRegions);
+      
+      for (const line of horizontalLines) {
+        const affectedRegions = this.findAffectedTextRegionsWithContentCheck(line, textRegions);
+        
+        for (const region of affectedRegions) {
+          const anomalyId = `strike_${documentId}_p${pageNumber}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          const thumbnailPath = await this.generateThumbnail(
+            imagePath,
+            region,
+            anomalyId
+          );
+
+          anomalies.push({
+            id: anomalyId,
+            type: 'strike_through',
+            confidence: 80,
+            pageNumber,
+            boundingBox: this.lineToBoundingBox(line),
+            affectedTextRegion: region,
+            affectedText: null,
+            thumbnailPath,
+            severity: 'high',
+            description: `Horizontal strike-through line detected crossing text content`,
+            detectionMethod: 'line_detection',
+          });
+        }
+      }
+
+      // Step 3: Red ink detection - highly reliable signal for corrections
       const redRegions = await this.detectRedInkRegions(imageData, width, height);
       for (const region of redRegions) {
         const affectedRegions = this.findTextRegionsInArea(region.boundingBox, textRegions);
         
-        if (affectedRegions.length > 0 || region.pixelCount > 100) {
+        if (affectedRegions.length > 0 || region.pixelCount > 150) {
           const anomalyId = `red_${documentId}_p${pageNumber}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
           const thumbnailPath = await this.generateThumbnail(
             imagePath,
@@ -150,7 +178,8 @@ export class VisualAnalyzer {
         }
       }
 
-      const erasureRegions = await this.detectErasureRegions(imageData, width, height, textRegions);
+      // Step 4: Erasure detection with local contrast comparison
+      const erasureRegions = await this.detectErasureRegionsWithLocalContrast(imageData, width, height, textRegions);
       for (const region of erasureRegions) {
         const anomalyId = `erasure_${documentId}_p${pageNumber}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         const thumbnailPath = await this.generateThumbnail(
@@ -162,15 +191,15 @@ export class VisualAnalyzer {
         anomalies.push({
           id: anomalyId,
           type: 'erasure',
-          confidence: 60,
+          confidence: 65,
           pageNumber,
           boundingBox: region,
           affectedTextRegion: region,
           affectedText: null,
           thumbnailPath,
           severity: 'medium',
-          description: 'Possible erasure or correction fluid detected',
-          detectionMethod: 'brightness_analysis',
+          description: 'Possible erasure or correction detected (local contrast anomaly)',
+          detectionMethod: 'local_contrast_analysis',
         });
       }
 
@@ -428,6 +457,496 @@ export class VisualAnalyzer {
   }
 
   /**
+   * CONSERVATIVE APPROACH: Only detect diagonal lines (15-75 degrees or 105-165 degrees)
+   * Form borders, table lines, underlines are all horizontal or vertical
+   * Real strike-throughs from pen/pencil are often diagonal
+   */
+  private async detectDiagonalStrikethroughsOnly(
+    imageData: ImageDataLike,
+    width: number,
+    height: number
+  ): Promise<DetectedLine[]> {
+    const data = imageData.data;
+    const lines: DetectedLine[] = [];
+    const visited = new Set<string>();
+
+    // Convert to grayscale
+    const grayscale = new Uint8Array(width * height);
+    for (let i = 0; i < width * height; i++) {
+      const r = data[i * 4];
+      const g = data[i * 4 + 1];
+      const b = data[i * 4 + 2];
+      grayscale[i] = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    }
+
+    const edges = this.sobelEdgeDetection(grayscale, width, height);
+    const minDiagLength = 70; // Require longer lines for diagonal detection
+
+    // Only scan for diagonal lines at specific angles (excluding horizontal/vertical)
+    const diagonalAngles = [30, 45, 60, 120, 135, 150]; // Skip 0, 90, 180 degrees
+
+    for (let y = 0; y < height; y += 5) {
+      for (let x = 0; x < width; x += 5) {
+        if (edges[y * width + x] < 60) continue; // Higher edge threshold
+        
+        const key = `${x},${y}`;
+        if (visited.has(key)) continue;
+
+        for (const angle of diagonalAngles) {
+          const rad = angle * Math.PI / 180;
+          const dx = Math.cos(rad);
+          const dy = Math.sin(rad);
+          
+          let length = 0;
+          let cx = x, cy = y;
+          let darkPixelCount = 0;
+          
+          while (cx >= 0 && cx < width && cy >= 0 && cy < height && length < 500) {
+            const idx = Math.floor(cy) * width + Math.floor(cx);
+            const isDark = grayscale[idx] < 100;
+            const isEdge = edges[idx] > 50;
+            
+            if (isDark || isEdge) {
+              length++;
+              if (isDark) darkPixelCount++;
+              visited.add(`${Math.floor(cx)},${Math.floor(cy)}`);
+            } else {
+              break;
+            }
+            cx += dx;
+            cy += dy;
+          }
+
+          // Require: minimum length AND high continuity of dark pixels
+          const darkRatio = length > 0 ? darkPixelCount / length : 0;
+          
+          if (length >= minDiagLength && darkRatio > 0.7) {
+            lines.push({
+              x1: x,
+              y1: y,
+              x2: Math.floor(cx),
+              y2: Math.floor(cy),
+              angle,
+              length,
+              thickness: 2,
+            });
+          }
+        }
+      }
+    }
+
+    return lines;
+  }
+
+  /**
+   * Detect horizontal strike-throughs that cross through text content
+   * Key insight: underlines are at bottom edge, borders at top/bottom edges
+   * Real strike-throughs cross through the MIDDLE where text characters are
+   */
+  private async detectHorizontalStrikethroughs(
+    imageData: ImageDataLike,
+    width: number,
+    height: number,
+    textRegions: BoundingBox[]
+  ): Promise<DetectedLine[]> {
+    const data = imageData.data;
+    const lines: DetectedLine[] = [];
+
+    // Convert to grayscale
+    const grayscale = new Uint8Array(width * height);
+    for (let i = 0; i < width * height; i++) {
+      const r = data[i * 4];
+      const g = data[i * 4 + 1];
+      const b = data[i * 4 + 2];
+      grayscale[i] = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    }
+
+    // Use per-region tracking instead of global Y to avoid missing multi-column strikes
+    const regionLineMap = new Map<string, Set<number>>();
+
+    // Scan each text region for horizontal lines crossing through the middle
+    for (const region of textRegions) {
+      const regionKey = `${region.x}_${region.y}`;
+      if (!regionLineMap.has(regionKey)) {
+        regionLineMap.set(regionKey, new Set());
+      }
+      const regionProcessed = regionLineMap.get(regionKey)!;
+
+      const startX = Math.max(0, Math.floor(region.x));
+      const endX = Math.min(width, Math.floor(region.x + region.width));
+      const startY = Math.max(0, Math.floor(region.y));
+      const endY = Math.min(height, Math.floor(region.y + region.height));
+
+      // Define the "content zone" - middle 60% of the text region
+      // Skip top 20% and bottom 20% which are typically borders/underlines
+      const contentTop = startY + Math.floor(region.height * 0.20);
+      const contentBottom = startY + Math.floor(region.height * 0.80);
+
+      // Dynamic minimum length: at least 35% of region width, but minimum 25 pixels
+      const minHorizontalLength = Math.max(25, Math.floor(region.width * 0.35));
+
+      for (let y = contentTop; y < contentBottom; y++) {
+        if (regionProcessed.has(y)) continue;
+
+        let lineStart = -1;
+        let consecutiveDark = 0;
+
+        for (let x = startX; x < endX; x++) {
+          const idx = y * width + x;
+          const isDark = grayscale[idx] < 100; // Slightly relaxed threshold
+
+          if (isDark) {
+            if (lineStart === -1) lineStart = x;
+            consecutiveDark++;
+          } else {
+            if (consecutiveDark >= minHorizontalLength) {
+              // Validate this is a line, not just text
+              const isLine = this.validateStrikethroughLine(grayscale, width, height, lineStart, y, x - 1, minHorizontalLength);
+              
+              if (isLine) {
+                lines.push({
+                  x1: lineStart,
+                  y1: y,
+                  x2: x - 1,
+                  y2: y,
+                  angle: 0,
+                  length: consecutiveDark,
+                  thickness: this.estimateLineThickness(grayscale, width, height, lineStart, y, x - 1),
+                });
+                regionProcessed.add(y);
+              }
+            }
+            lineStart = -1;
+            consecutiveDark = 0;
+          }
+        }
+
+        // Check end of row
+        if (consecutiveDark >= minHorizontalLength) {
+          const isLine = this.validateStrikethroughLine(grayscale, width, height, lineStart, y, endX - 1, minHorizontalLength);
+          if (isLine) {
+            lines.push({
+              x1: lineStart,
+              y1: y,
+              x2: endX - 1,
+              y2: y,
+              angle: 0,
+              length: consecutiveDark,
+              thickness: this.estimateLineThickness(grayscale, width, height, lineStart, y, endX - 1),
+            });
+            regionProcessed.add(y);
+          }
+        }
+      }
+    }
+
+    return lines;
+  }
+
+  /**
+   * Validate that a horizontal line segment is a strike-through, not regular text
+   * Strike-throughs: consistent thin line with contrast on both sides
+   * Text: irregular patterns, different character shapes
+   */
+  private validateStrikethroughLine(
+    grayscale: Uint8Array,
+    width: number,
+    height: number,
+    x1: number,
+    y: number,
+    x2: number,
+    minLength: number = 25
+  ): boolean {
+    const lineLength = x2 - x1;
+    if (lineLength < minLength) return false;
+
+    // Check 1: Line should have consistent darkness
+    let darkCount = 0;
+    for (let x = x1; x <= x2; x++) {
+      if (grayscale[y * width + x] < 100) darkCount++;
+    }
+    const continuity = darkCount / lineLength;
+    if (continuity < 0.8) return false;
+
+    // Check 2: There should be lighter pixels above AND below the line
+    // (strike-throughs have text on at least one side, or cross empty space)
+    let lighterAbove = 0, lighterBelow = 0;
+    const checkDistance = 3;
+    const samplePoints = Math.min(10, Math.floor(lineLength / 10));
+
+    for (let i = 0; i < samplePoints; i++) {
+      const x = x1 + Math.floor(i * lineLength / samplePoints);
+      
+      // Check above
+      if (y - checkDistance >= 0) {
+        const abovePixel = grayscale[(y - checkDistance) * width + x];
+        if (abovePixel > 150) lighterAbove++;
+      }
+      
+      // Check below
+      if (y + checkDistance < height) {
+        const belowPixel = grayscale[(y + checkDistance) * width + x];
+        if (belowPixel > 150) lighterBelow++;
+      }
+    }
+
+    // At least 30% of sample points should have lighter pixels on at least one side
+    const hasContrast = (lighterAbove / samplePoints > 0.3) || (lighterBelow / samplePoints > 0.3);
+    if (!hasContrast) return false;
+
+    // Check 3: Line thickness should be relatively uniform (1-5 pixels)
+    const thickness = this.estimateLineThickness(grayscale, width, height, x1, y, x2);
+    if (thickness < 1 || thickness > 8) return false;
+
+    return true;
+  }
+
+  /**
+   * Find text regions affected by a line, with additional content check
+   * Ensures the line actually crosses through visible text content, not empty space
+   */
+  private findAffectedTextRegionsWithContentCheck(
+    line: DetectedLine,
+    textRegions: BoundingBox[]
+  ): BoundingBox[] {
+    const affected: BoundingBox[] = [];
+
+    for (const region of textRegions) {
+      // Check if line intersects with the middle portion of the region
+      const regionContentTop = region.y + region.height * 0.15;
+      const regionContentBottom = region.y + region.height * 0.85;
+      const lineY = (line.y1 + line.y2) / 2;
+
+      // Line must be in the content zone (not at edges)
+      if (lineY < regionContentTop || lineY > regionContentBottom) continue;
+
+      // Check horizontal overlap
+      const lineLeft = Math.min(line.x1, line.x2);
+      const lineRight = Math.max(line.x1, line.x2);
+      const regionLeft = region.x;
+      const regionRight = region.x + region.width;
+
+      const overlap = Math.min(lineRight, regionRight) - Math.max(lineLeft, regionLeft);
+      const widthCoverage = overlap / region.width;
+
+      // Line should span at least 25% of the region width
+      if (widthCoverage >= 0.25) {
+        affected.push(region);
+      }
+    }
+
+    return affected;
+  }
+
+  /**
+   * Erasure detection using local contrast comparison
+   * Compares each region against its immediate neighbors, not page-wide baseline
+   */
+  private async detectErasureRegionsWithLocalContrast(
+    imageData: ImageDataLike,
+    width: number,
+    height: number,
+    textRegions: BoundingBox[]
+  ): Promise<BoundingBox[]> {
+    const erasures: BoundingBox[] = [];
+    const data = imageData.data;
+
+    if (textRegions.length === 0) return erasures;
+
+    for (const region of textRegions) {
+      const startX = Math.max(0, Math.floor(region.x));
+      const startY = Math.max(0, Math.floor(region.y));
+      const endX = Math.min(width, Math.floor(region.x + region.width));
+      const endY = Math.min(height, Math.floor(region.y + region.height));
+
+      if (endX - startX < 15 || endY - startY < 15) continue;
+
+      // Calculate region brightness
+      let regionSum = 0;
+      let whitePixels = 0;
+      let totalPixels = 0;
+
+      for (let y = startY; y < endY; y++) {
+        for (let x = startX; x < endX; x++) {
+          const idx = (y * width + x) * 4;
+          const r = data[idx];
+          const g = data[idx + 1];
+          const b = data[idx + 2];
+          const brightness = (r + g + b) / 3;
+          regionSum += brightness;
+          totalPixels++;
+          if (brightness > 240 && Math.abs(r - g) < 8 && Math.abs(g - b) < 8) {
+            whitePixels++;
+          }
+        }
+      }
+
+      if (totalPixels === 0) continue;
+
+      const regionAvg = regionSum / totalPixels;
+      const whiteRatio = whitePixels / totalPixels;
+
+      // Calculate local neighborhood brightness (surrounding area)
+      const neighborPadding = 20;
+      const neighborStartX = Math.max(0, startX - neighborPadding);
+      const neighborStartY = Math.max(0, startY - neighborPadding);
+      const neighborEndX = Math.min(width, endX + neighborPadding);
+      const neighborEndY = Math.min(height, endY + neighborPadding);
+
+      let neighborSum = 0;
+      let neighborCount = 0;
+
+      // Sample border pixels around the region
+      for (let y = neighborStartY; y < neighborEndY; y++) {
+        for (let x = neighborStartX; x < neighborEndX; x++) {
+          // Only sample pixels OUTSIDE the main region
+          if (x >= startX && x < endX && y >= startY && y < endY) continue;
+
+          const idx = (y * width + x) * 4;
+          const r = data[idx];
+          const g = data[idx + 1];
+          const b = data[idx + 2];
+          neighborSum += (r + g + b) / 3;
+          neighborCount++;
+        }
+      }
+
+      if (neighborCount < 50) continue;
+
+      const neighborAvg = neighborSum / neighborCount;
+
+      // Erasure detection criteria (relaxed for scanned documents):
+      // 1. Region is significantly brighter than surroundings (>10 points)
+      // 2. Moderate white pixel ratio (>55% for scanned docs with grain)
+      // 3. Or very high brightness (>220) with edge signature
+      const brightnessDiff = regionAvg - neighborAvg;
+
+      // Check for correction fluid edge first (most reliable signal)
+      const hasEdge = this.detectErasureEdge(data, width, height, region);
+
+      // Criteria: significant brightness anomaly with edge signature
+      // OR very high brightness difference even without strong edge
+      const hasSignificantBrightness = brightnessDiff > 10 && whiteRatio > 0.55 && regionAvg > 210;
+      const hasStrongBrightness = brightnessDiff > 20 && regionAvg > 220;
+
+      if ((hasSignificantBrightness && hasEdge) || hasStrongBrightness) {
+        erasures.push(region);
+      }
+    }
+
+    return erasures;
+  }
+
+  /**
+   * Erasure detection using page-level background baseline
+   * Much more robust than comparing against text regions
+   */
+  private async detectErasureRegionsWithPageBaseline(
+    imageData: ImageDataLike,
+    width: number,
+    height: number,
+    textRegions: BoundingBox[]
+  ): Promise<BoundingBox[]> {
+    const erasures: BoundingBox[] = [];
+    const data = imageData.data;
+
+    if (textRegions.length === 0) return erasures;
+
+    // Step 1: Calculate page background brightness by sampling areas OUTSIDE text regions
+    const backgroundSamples: number[] = [];
+    const textRegionSet = new Set<number>();
+    
+    // Build a set of pixels that are inside text regions
+    for (const region of textRegions) {
+      const startX = Math.max(0, Math.floor(region.x));
+      const startY = Math.max(0, Math.floor(region.y));
+      const endX = Math.min(width, Math.floor(region.x + region.width));
+      const endY = Math.min(height, Math.floor(region.y + region.height));
+      
+      for (let y = startY; y < endY; y++) {
+        for (let x = startX; x < endX; x++) {
+          textRegionSet.add(y * width + x);
+        }
+      }
+    }
+
+    // Sample background pixels (outside text regions)
+    const sampleStep = 50;
+    for (let y = 10; y < height - 10; y += sampleStep) {
+      for (let x = 10; x < width - 10; x += sampleStep) {
+        const idx = y * width + x;
+        if (!textRegionSet.has(idx)) {
+          const r = data[idx * 4];
+          const g = data[idx * 4 + 1];
+          const b = data[idx * 4 + 2];
+          backgroundSamples.push((r + g + b) / 3);
+        }
+      }
+    }
+
+    if (backgroundSamples.length < 10) return erasures;
+
+    // Calculate background statistics
+    const bgMean = backgroundSamples.reduce((a, b) => a + b, 0) / backgroundSamples.length;
+    const bgVariance = backgroundSamples.reduce((sum, b) => sum + Math.pow(b - bgMean, 2), 0) / backgroundSamples.length;
+    const bgStdDev = Math.sqrt(bgVariance);
+
+    // Step 2: For each text region, check if it's anomalously bright
+    for (const region of textRegions) {
+      const startX = Math.max(0, Math.floor(region.x));
+      const startY = Math.max(0, Math.floor(region.y));
+      const endX = Math.min(width, Math.floor(region.x + region.width));
+      const endY = Math.min(height, Math.floor(region.y + region.height));
+
+      if (endX - startX < 10 || endY - startY < 10) continue;
+
+      let sumBrightness = 0;
+      let veryWhitePixels = 0;
+      let totalPixels = 0;
+
+      for (let y = startY; y < endY; y++) {
+        for (let x = startX; x < endX; x++) {
+          const idx = (y * width + x) * 4;
+          const r = data[idx];
+          const g = data[idx + 1];
+          const b = data[idx + 2];
+          
+          const brightness = (r + g + b) / 3;
+          sumBrightness += brightness;
+          totalPixels++;
+
+          // Very white pixels (near-white, uniform color)
+          if (brightness > 245 && Math.abs(r - g) < 8 && Math.abs(g - b) < 8) {
+            veryWhitePixels++;
+          }
+        }
+      }
+
+      if (totalPixels === 0) continue;
+
+      const avgBrightness = sumBrightness / totalPixels;
+      const whiteRatio = veryWhitePixels / totalPixels;
+
+      // Region must be:
+      // 1. Significantly brighter than page background (more than 2 std devs)
+      // 2. Have very high concentration of pure white pixels (>85%)
+      // 3. Have high absolute brightness (>245)
+      const brightnessZScore = bgStdDev > 1 ? (avgBrightness - bgMean) / bgStdDev : 0;
+
+      if (brightnessZScore > 2.0 && whiteRatio > 0.85 && avgBrightness > 245) {
+        // Additional check: Look for correction fluid edge signature
+        const hasVisibleEdge = this.detectErasureEdge(data, width, height, region);
+        
+        if (hasVisibleEdge) {
+          erasures.push(region);
+        }
+      }
+    }
+
+    return erasures;
+  }
+
+  /**
    * Build a layout mask identifying form structure borders
    * Lines at cell edges (top/bottom boundaries) are likely form borders, not strike-throughs
    */
@@ -571,8 +1090,10 @@ export class VisualAnalyzer {
   /**
    * Stricter version of findAffectedTextRegions with midline intersection and width coverage checks
    * A true strike-through must:
-   * 1. Cross through the middle 30% of text height (35-65% of box height)
-   * 2. Span at least 40% of the text box width
+   * 1. Cross through the middle portion of text height (not at edges - that's a border/underline)
+   * 2. Span a significant portion of the text box width
+   * 3. NOT be at the bottom of the text box (that's an underline for data entry fields)
+   * 4. NOT be at the edges of text (that's a box border)
    */
   private findAffectedTextRegionsStrict(line: DetectedLine, textRegions: BoundingBox[]): BoundingBox[] {
     const affected: BoundingBox[] = [];
@@ -587,7 +1108,53 @@ export class VisualAnalyzer {
   }
 
   /**
+   * Check if a line is likely an underline (at or below text baseline)
+   * Underlines are for signature/entry fields - NOT strike-throughs
+   */
+  private isLikelyUnderline(line: DetectedLine, box: BoundingBox): boolean {
+    // Underlines are typically in the bottom 20% of the text region or below it
+    const lineY = (line.y1 + line.y2) / 2;
+    const boxBottom = box.y + box.height;
+    const underlineZone = box.y + box.height * 0.80; // Bottom 20%
+    
+    // Line is in the underline zone (bottom portion of text or below)
+    if (lineY >= underlineZone && lineY <= boxBottom + 10) {
+      // And it's nearly horizontal
+      if (Math.abs(line.angle) < 5) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Check if a line is likely a box border (at the very top or bottom edge)
+   */
+  private isLikelyBoxBorder(line: DetectedLine, box: BoundingBox): boolean {
+    const lineY = (line.y1 + line.y2) / 2;
+    const boxTop = box.y;
+    const boxBottom = box.y + box.height;
+    
+    // Line is within 5 pixels of box top or bottom edge
+    const nearTop = Math.abs(lineY - boxTop) < 5;
+    const nearBottom = Math.abs(lineY - boxBottom) < 5;
+    
+    // Nearly horizontal (boxes have straight edges)
+    const isHorizontal = Math.abs(line.angle) < 3;
+    
+    // Spans most of the box width (box borders usually span full width)
+    const lineLeft = Math.min(line.x1, line.x2);
+    const lineRight = Math.max(line.x1, line.x2);
+    const overlapLeft = Math.max(lineLeft, box.x);
+    const overlapRight = Math.min(lineRight, box.x + box.width);
+    const widthCoverage = (overlapRight - overlapLeft) / box.width;
+    
+    return (nearTop || nearBottom) && isHorizontal && widthCoverage > 0.7;
+  }
+
+  /**
    * Strict intersection check requiring midline crossing and width coverage
+   * Filters out underlines and box borders which are commonly mistaken for strike-throughs
    */
   private doesLineIntersectBoxStrict(line: DetectedLine, box: BoundingBox): boolean {
     const boxTop = box.y;
@@ -605,16 +1172,27 @@ export class VisualAnalyzer {
     const verticalOverlap = lineTop < boxBottom && lineBottom > boxTop;
     if (!horizontalOverlap || !verticalOverlap) return false;
 
-    // Check 2: Line must span at least 40% of text box width
+    // Check 2: Filter out underlines (lines at bottom of text - for data entry fields)
+    if (this.isLikelyUnderline(line, box)) {
+      return false;
+    }
+
+    // Check 3: Filter out box borders (lines at top/bottom edge spanning full width)
+    if (this.isLikelyBoxBorder(line, box)) {
+      return false;
+    }
+
+    // Check 4: Line must span at least 30% of text box width (relaxed from 40%)
     const overlapLeft = Math.max(lineLeft, boxLeft);
     const overlapRight = Math.min(lineRight, boxRight);
     const widthCoverage = (overlapRight - overlapLeft) / box.width;
-    if (widthCoverage < 0.4) return false;
+    if (widthCoverage < 0.3) return false;
 
-    // Check 3: Line must cross through the middle 30% of the text box (35-65% height)
+    // Check 5: Line must cross through the middle portion of the text box (25-75% height)
     // This is the key discriminator - form borders run at edges, strike-throughs cross centers
-    const midlineTop = boxTop + box.height * 0.35;
-    const midlineBottom = boxTop + box.height * 0.65;
+    // Expanded range from 35-65% to 25-75% to catch more legitimate strike-throughs
+    const midlineTop = boxTop + box.height * 0.25;
+    const midlineBottom = boxTop + box.height * 0.75;
 
     if (Math.abs(line.angle) < 15) {
       // For horizontal lines, the Y coordinate must fall in the middle band
@@ -806,6 +1384,11 @@ export class VisualAnalyzer {
     };
   }
 
+  /**
+   * Detect erasure regions using relative z-score contrast test
+   * Compares each text region's brightness against the page baseline
+   * Only flags regions that are significantly brighter than expected (outliers)
+   */
   private async detectErasureRegions(
     imageData: ImageDataLike,
     width: number,
@@ -815,6 +1398,14 @@ export class VisualAnalyzer {
     const erasures: BoundingBox[] = [];
     const data = imageData.data;
 
+    if (textRegions.length < 3) {
+      // Not enough regions to establish baseline - skip erasure detection
+      return erasures;
+    }
+
+    // First pass: Calculate brightness statistics for all text regions
+    const regionStats: { region: BoundingBox; avgBrightness: number; whiteRatio: number; hasText: boolean }[] = [];
+    
     for (const region of textRegions) {
       const startX = Math.max(0, Math.floor(region.x));
       const startY = Math.max(0, Math.floor(region.y));
@@ -822,8 +1413,9 @@ export class VisualAnalyzer {
       const endY = Math.min(height, Math.floor(region.y + region.height));
 
       let whitePixels = 0;
+      let darkPixels = 0;
       let totalPixels = 0;
-      let avgBrightness = 0;
+      let sumBrightness = 0;
 
       for (let y = startY; y < endY; y++) {
         for (let x = startX; x < endX; x++) {
@@ -833,26 +1425,158 @@ export class VisualAnalyzer {
           const b = data[idx + 2];
           
           const brightness = (r + g + b) / 3;
-          avgBrightness += brightness;
+          sumBrightness += brightness;
           totalPixels++;
 
           if (brightness > 240 && Math.abs(r - g) < 10 && Math.abs(g - b) < 10) {
             whitePixels++;
+          }
+          if (brightness < 100) {
+            darkPixels++;
           }
         }
       }
 
       if (totalPixels === 0) continue;
 
+      const avgBrightness = sumBrightness / totalPixels;
       const whiteRatio = whitePixels / totalPixels;
-      avgBrightness /= totalPixels;
+      const darkRatio = darkPixels / totalPixels;
+      
+      // A region "has text" if it contains some dark pixels (ink/print)
+      const hasText = darkRatio > 0.05;
 
-      if (whiteRatio > 0.6 && avgBrightness > 220) {
-        erasures.push(region);
+      regionStats.push({
+        region,
+        avgBrightness,
+        whiteRatio,
+        hasText
+      });
+    }
+
+    if (regionStats.length < 3) return erasures;
+
+    // Calculate baseline statistics from regions that have text (exclude empty fields)
+    const textRegionStats = regionStats.filter(s => s.hasText);
+    
+    if (textRegionStats.length < 2) {
+      // Not enough text-containing regions for comparison
+      return erasures;
+    }
+
+    // Calculate mean and standard deviation of brightness for text-containing regions
+    const brightnesses = textRegionStats.map(s => s.avgBrightness);
+    const mean = brightnesses.reduce((a, b) => a + b, 0) / brightnesses.length;
+    const variance = brightnesses.reduce((sum, b) => sum + Math.pow(b - mean, 2), 0) / brightnesses.length;
+    const stdDev = Math.sqrt(variance);
+
+    // Avoid division by zero for very uniform pages
+    const effectiveStdDev = Math.max(stdDev, 10);
+
+    // Second pass: Flag regions that are significant outliers (z-score > 2.5)
+    // AND have very high white ratio (indicating possible erasure/correction fluid)
+    for (const stat of regionStats) {
+      const zScore = (stat.avgBrightness - mean) / effectiveStdDev;
+      
+      // Region must be:
+      // 1. Significantly brighter than other text regions (z-score > 2.5)
+      // 2. Have very high white pixel ratio (>80% white - more strict than before)
+      // 3. High absolute brightness (>235 - stricter threshold)
+      // 4. The region should have HAD text (erasures remove existing text)
+      //    We check this by looking at edge contrast - erasures often have visible edges
+      
+      if (zScore > 2.5 && stat.whiteRatio > 0.80 && stat.avgBrightness > 235) {
+        // Additional check: Look for sharp brightness transitions at region edges
+        // Real erasures often have visible boundaries where correction fluid was applied
+        const hasErasureEdge = this.detectErasureEdge(data, width, height, stat.region);
+        
+        if (hasErasureEdge) {
+          erasures.push(stat.region);
+        }
       }
     }
 
     return erasures;
+  }
+
+  /**
+   * Detect if a region has sharp brightness transitions at its edges
+   * indicative of correction fluid application
+   */
+  private detectErasureEdge(
+    data: Uint8ClampedArray,
+    width: number,
+    height: number,
+    region: BoundingBox
+  ): boolean {
+    const startX = Math.max(0, Math.floor(region.x));
+    const startY = Math.max(0, Math.floor(region.y));
+    const endX = Math.min(width - 1, Math.floor(region.x + region.width));
+    const endY = Math.min(height - 1, Math.floor(region.y + region.height));
+
+    let significantEdges = 0;
+    const edgeThreshold = 50; // Brightness difference to consider an "edge"
+    
+    // Sample points along the region border
+    const samplePoints = 20;
+    
+    // Check top and bottom edges
+    for (let i = 0; i < samplePoints; i++) {
+      const x = startX + Math.floor((endX - startX) * i / samplePoints);
+      
+      // Top edge
+      if (startY > 0) {
+        const insideIdx = (startY * width + x) * 4;
+        const outsideIdx = ((startY - 1) * width + x) * 4;
+        const insideBrightness = (data[insideIdx] + data[insideIdx + 1] + data[insideIdx + 2]) / 3;
+        const outsideBrightness = (data[outsideIdx] + data[outsideIdx + 1] + data[outsideIdx + 2]) / 3;
+        if (Math.abs(insideBrightness - outsideBrightness) > edgeThreshold) {
+          significantEdges++;
+        }
+      }
+      
+      // Bottom edge
+      if (endY < height - 1) {
+        const insideIdx = (endY * width + x) * 4;
+        const outsideIdx = ((endY + 1) * width + x) * 4;
+        const insideBrightness = (data[insideIdx] + data[insideIdx + 1] + data[insideIdx + 2]) / 3;
+        const outsideBrightness = (data[outsideIdx] + data[outsideIdx + 1] + data[outsideIdx + 2]) / 3;
+        if (Math.abs(insideBrightness - outsideBrightness) > edgeThreshold) {
+          significantEdges++;
+        }
+      }
+    }
+
+    // Check left and right edges
+    for (let i = 0; i < samplePoints; i++) {
+      const y = startY + Math.floor((endY - startY) * i / samplePoints);
+      
+      // Left edge
+      if (startX > 0) {
+        const insideIdx = (y * width + startX) * 4;
+        const outsideIdx = (y * width + startX - 1) * 4;
+        const insideBrightness = (data[insideIdx] + data[insideIdx + 1] + data[insideIdx + 2]) / 3;
+        const outsideBrightness = (data[outsideIdx] + data[outsideIdx + 1] + data[outsideIdx + 2]) / 3;
+        if (Math.abs(insideBrightness - outsideBrightness) > edgeThreshold) {
+          significantEdges++;
+        }
+      }
+      
+      // Right edge
+      if (endX < width - 1) {
+        const insideIdx = (y * width + endX) * 4;
+        const outsideIdx = (y * width + endX + 1) * 4;
+        const insideBrightness = (data[insideIdx] + data[insideIdx + 1] + data[insideIdx + 2]) / 3;
+        const outsideBrightness = (data[outsideIdx] + data[outsideIdx + 1] + data[outsideIdx + 2]) / 3;
+        if (Math.abs(insideBrightness - outsideBrightness) > edgeThreshold) {
+          significantEdges++;
+        }
+      }
+    }
+
+    // Require at least 20% of sampled edge points to show significant contrast
+    const totalSamples = samplePoints * 4;
+    return significantEdges > totalSamples * 0.20;
   }
 
   private findAffectedTextRegions(line: DetectedLine, textRegions: BoundingBox[]): BoundingBox[] {
