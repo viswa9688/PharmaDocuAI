@@ -644,9 +644,17 @@ export class VisualAnalyzer {
   }
 
   /**
-   * Validate that a horizontal line segment is a strike-through, not regular text
-   * Strike-throughs: consistent thin line with contrast on both sides
-   * Text: irregular patterns, different character shapes
+   * Validate that a horizontal line segment is a strike-through, not a table/form border
+   * 
+   * Border characteristics (REJECT):
+   * - Has perpendicular connectors forming corners
+   * - Perfectly uniform thickness/intensity (std dev ≈ 0)
+   * - Extends significantly beyond text width
+   * 
+   * Strike-through characteristics (ACCEPT):
+   * - Crosses through character middle, not at edges
+   * - Has slight variations (hand-drawn appearance)
+   * - Bounded by text width
    */
   private validateStrikethroughLine(
     grayscale: Uint8Array,
@@ -660,16 +668,26 @@ export class VisualAnalyzer {
     const lineLength = x2 - x1;
     if (lineLength < minLength) return false;
 
-    // Check 1: Line should have consistent darkness
+    // Check 1: Detect perpendicular connectors (corners) - indicates table border
+    if (this.hasPerpendicularConnectors(grayscale, width, height, x1, y, x2)) {
+      return false; // This is a table/form border, not a strike-through
+    }
+
+    // Check 2: Calculate uniformity variance - perfectly uniform = border
+    const uniformityCheck = this.checkLineUniformity(grayscale, width, x1, y, x2);
+    if (uniformityCheck.isPerfectlyUniform) {
+      return false; // Too uniform to be hand-drawn strike-through
+    }
+
+    // Check 3: Line should have consistent darkness (but not perfect)
     let darkCount = 0;
     for (let x = x1; x <= x2; x++) {
       if (grayscale[y * width + x] < 100) darkCount++;
     }
     const continuity = darkCount / lineLength;
-    if (continuity < 0.8) return false;
+    if (continuity < 0.75) return false; // Too fragmented
 
-    // Check 2: There should be lighter pixels above AND below the line
-    // (strike-throughs have text on at least one side, or cross empty space)
+    // Check 4: There should be lighter pixels above OR below the line
     let lighterAbove = 0, lighterBelow = 0;
     const checkDistance = 3;
     const samplePoints = Math.min(10, Math.floor(lineLength / 10));
@@ -677,24 +695,21 @@ export class VisualAnalyzer {
     for (let i = 0; i < samplePoints; i++) {
       const x = x1 + Math.floor(i * lineLength / samplePoints);
       
-      // Check above
       if (y - checkDistance >= 0) {
         const abovePixel = grayscale[(y - checkDistance) * width + x];
         if (abovePixel > 150) lighterAbove++;
       }
       
-      // Check below
       if (y + checkDistance < height) {
         const belowPixel = grayscale[(y + checkDistance) * width + x];
         if (belowPixel > 150) lighterBelow++;
       }
     }
 
-    // At least 30% of sample points should have lighter pixels on at least one side
     const hasContrast = (lighterAbove / samplePoints > 0.3) || (lighterBelow / samplePoints > 0.3);
     if (!hasContrast) return false;
 
-    // Check 3: Line thickness should be relatively uniform (1-5 pixels)
+    // Check 5: Line thickness should be reasonable (1-8 pixels)
     const thickness = this.estimateLineThickness(grayscale, width, height, x1, y, x2);
     if (thickness < 1 || thickness > 8) return false;
 
@@ -702,8 +717,138 @@ export class VisualAnalyzer {
   }
 
   /**
-   * Find text regions affected by a line, with additional content check
-   * Ensures the line actually crosses through visible text content, not empty space
+   * Check for perpendicular (vertical) connectors at line endpoints
+   * Table borders have corners; strike-throughs end abruptly
+   * 
+   * Key insight: Real strike-throughs end in empty space.
+   * If EITHER endpoint has a vertical line, it's likely a table corner.
+   */
+  private hasPerpendicularConnectors(
+    grayscale: Uint8Array,
+    width: number,
+    height: number,
+    x1: number,
+    y: number,
+    x2: number
+  ): boolean {
+    const cornerCheckLength = 8; // Check 8 pixels in each vertical direction
+    const darkThreshold = 100;
+
+    // Check left endpoint for vertical connector (sample 3-pixel window for skew tolerance)
+    const leftHasVertical = this.checkVerticalLineWithWindow(grayscale, width, height, x1, y, cornerCheckLength, darkThreshold, 3);
+    
+    // Check right endpoint for vertical connector
+    const rightHasVertical = this.checkVerticalLineWithWindow(grayscale, width, height, x2, y, cornerCheckLength, darkThreshold, 3);
+
+    // REJECT if EITHER endpoint has a vertical connector - indicates table/form border
+    if (leftHasVertical || rightHasVertical) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Check for vertical line with a horizontal window for skew tolerance
+   * Samples multiple x positions within the window
+   */
+  private checkVerticalLineWithWindow(
+    grayscale: Uint8Array,
+    width: number,
+    height: number,
+    x: number,
+    y: number,
+    checkLength: number,
+    darkThreshold: number,
+    windowWidth: number
+  ): boolean {
+    // Sample across the window to handle slight skew
+    for (let dx = 0; dx < windowWidth; dx++) {
+      const checkX = x + dx;
+      if (checkX < 0 || checkX >= width) continue;
+      
+      if (this.checkVerticalLine(grayscale, width, height, checkX, y, checkLength, darkThreshold)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Check if there's a vertical line segment at a given x position
+   */
+  private checkVerticalLine(
+    grayscale: Uint8Array,
+    width: number,
+    height: number,
+    x: number,
+    y: number,
+    checkLength: number,
+    darkThreshold: number
+  ): boolean {
+    let darkAbove = 0;
+    let darkBelow = 0;
+
+    // Check pixels above
+    for (let dy = 1; dy <= checkLength; dy++) {
+      if (y - dy >= 0 && grayscale[(y - dy) * width + x] < darkThreshold) {
+        darkAbove++;
+      }
+    }
+
+    // Check pixels below
+    for (let dy = 1; dy <= checkLength; dy++) {
+      if (y + dy < height && grayscale[(y + dy) * width + x] < darkThreshold) {
+        darkBelow++;
+      }
+    }
+
+    // Require at least 60% dark pixels in one direction to count as vertical line
+    const threshold = Math.floor(checkLength * 0.6);
+    return darkAbove >= threshold || darkBelow >= threshold;
+  }
+
+  /**
+   * Check line uniformity - table borders are perfectly uniform,
+   * hand-drawn strike-throughs have natural variation
+   */
+  private checkLineUniformity(
+    grayscale: Uint8Array,
+    width: number,
+    x1: number,
+    y: number,
+    x2: number
+  ): { isPerfectlyUniform: boolean; stdDev: number } {
+    const pixels: number[] = [];
+    
+    for (let x = x1; x <= x2; x++) {
+      pixels.push(grayscale[y * width + x]);
+    }
+
+    if (pixels.length < 10) {
+      return { isPerfectlyUniform: false, stdDev: 0 };
+    }
+
+    // Calculate mean
+    const mean = pixels.reduce((a, b) => a + b, 0) / pixels.length;
+    
+    // Calculate standard deviation
+    const squaredDiffs = pixels.map(p => Math.pow(p - mean, 2));
+    const avgSquaredDiff = squaredDiffs.reduce((a, b) => a + b, 0) / pixels.length;
+    const stdDev = Math.sqrt(avgSquaredDiff);
+
+    // If std dev is very low (< 3), the line is too uniform to be hand-drawn
+    // Scanned documents typically have at least some variation
+    const isPerfectlyUniform = stdDev < 3;
+
+    return { isPerfectlyUniform, stdDev };
+  }
+
+  /**
+   * Find text regions affected by a line, with comprehensive checks:
+   * - Shrinks OCR bounding boxes by 8% to avoid false edge intersections
+   * - Verifies line crosses through character middle
+   * - Rejects lines extending significantly beyond text bounds
    */
   private findAffectedTextRegionsWithContentCheck(
     line: DetectedLine,
@@ -712,27 +857,46 @@ export class VisualAnalyzer {
     const affected: BoundingBox[] = [];
 
     for (const region of textRegions) {
-      // Check if line intersects with the middle portion of the region
-      const regionContentTop = region.y + region.height * 0.15;
-      const regionContentBottom = region.y + region.height * 0.85;
+      // SHRINK the OCR bounding box by 8% on each side to avoid edge intersections
+      const shrinkFactor = 0.08;
+      const shrunkRegion = {
+        x: region.x + region.width * shrinkFactor,
+        y: region.y + region.height * shrinkFactor,
+        width: region.width * (1 - 2 * shrinkFactor),
+        height: region.height * (1 - 2 * shrinkFactor),
+      };
+
+      // Line must be in the content zone (middle 70% of shrunk region)
+      const regionContentTop = shrunkRegion.y + shrunkRegion.height * 0.15;
+      const regionContentBottom = shrunkRegion.y + shrunkRegion.height * 0.85;
       const lineY = (line.y1 + line.y2) / 2;
 
-      // Line must be in the content zone (not at edges)
       if (lineY < regionContentTop || lineY > regionContentBottom) continue;
 
-      // Check horizontal overlap
+      // Check horizontal overlap with shrunk region
       const lineLeft = Math.min(line.x1, line.x2);
       const lineRight = Math.max(line.x1, line.x2);
-      const regionLeft = region.x;
-      const regionRight = region.x + region.width;
+      const regionLeft = shrunkRegion.x;
+      const regionRight = shrunkRegion.x + shrunkRegion.width;
 
       const overlap = Math.min(lineRight, regionRight) - Math.max(lineLeft, regionLeft);
-      const widthCoverage = overlap / region.width;
+      const widthCoverage = overlap / shrunkRegion.width;
 
       // Line should span at least 25% of the region width
-      if (widthCoverage >= 0.25) {
-        affected.push(region);
-      }
+      if (widthCoverage < 0.25) continue;
+
+      // CHECK: Reject if line extends significantly beyond text bounds on EITHER side
+      // This catches table borders that span multiple cells
+      const extensionLeft = Math.max(0, regionLeft - lineLeft);
+      const extensionRight = Math.max(0, lineRight - regionRight);
+      const extensionLeftRatio = extensionLeft / shrunkRegion.width;
+      const extensionRightRatio = extensionRight / shrunkRegion.width;
+
+      // If line extends more than 12% beyond text on EITHER side, it's likely a border
+      // Real strike-throughs are bounded by the text they cross
+      if (extensionLeftRatio > 0.12 || extensionRightRatio > 0.12) continue;
+
+      affected.push(region);
     }
 
     return affected;
