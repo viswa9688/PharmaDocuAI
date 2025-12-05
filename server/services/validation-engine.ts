@@ -1244,26 +1244,28 @@ export class ValidationEngine {
       });
     }
 
-    // Alert 2: Missing batch numbers
-    if (batchValuesFound.length === 0 && emptyBatchFields.length > 0) {
-      const pagesWithEmptyBatch = Array.from(new Set(emptyBatchFields.map(f => f.pageNumber)));
-      alerts.push({
-        id: this.generateAlertId(),
-        category: "missing_value",
-        severity: "critical",
-        title: "Batch Number Missing",
-        message: `Batch number field is present but empty. This is a critical field required for batch traceability.`,
-        details: `Empty batch number found on page(s): ${pagesWithEmptyBatch.join(", ")}`,
-        source: emptyBatchFields[0].source,
-        relatedValues: [],
-        suggestedAction: "Enter the batch number for proper document identification and traceability.",
-        ruleId: null,
-        formulaId: null,
-        isResolved: false,
-        resolvedBy: null,
-        resolvedAt: null,
-        resolution: null
-      });
+    // Alert 2: Missing batch numbers - generate alert for EVERY empty batch field
+    if (emptyBatchFields.length > 0) {
+      // Create individual alerts for each page with empty batch field
+      for (const emptyField of emptyBatchFields) {
+        alerts.push({
+          id: this.generateAlertId(),
+          category: "missing_value",
+          severity: "critical",
+          title: "Batch Number Missing",
+          message: `Batch number field "${emptyField.label}" is present but empty on page ${emptyField.pageNumber}. This is a critical field required for batch traceability.`,
+          details: `Empty batch number field found: "${emptyField.label}"`,
+          source: emptyField.source,
+          relatedValues: [],
+          suggestedAction: "Enter the batch number for proper document identification and traceability.",
+          ruleId: null,
+          formulaId: null,
+          isResolved: false,
+          resolvedBy: null,
+          resolvedAt: null,
+          resolution: null
+        });
+      }
     }
 
     // Alert 3: Cross-page consistency check
@@ -1623,26 +1625,28 @@ export class ValidationEngine {
       });
     }
 
-    // Alert 2: Missing lot numbers
-    if (lotValuesFound.length === 0 && emptyLotFields.length > 0) {
-      const pagesWithEmptyLot = Array.from(new Set(emptyLotFields.map(f => f.pageNumber)));
-      alerts.push({
-        id: this.generateAlertId(),
-        category: "missing_value",
-        severity: "high",
-        title: "Lot Number Missing",
-        message: `Lot number field is present but empty. This field is important for traceability.`,
-        details: `Empty lot number found on page(s): ${pagesWithEmptyLot.join(", ")}`,
-        source: emptyLotFields[0].source,
-        relatedValues: [],
-        suggestedAction: "Enter the lot number for proper material tracking.",
-        ruleId: null,
-        formulaId: null,
-        isResolved: false,
-        resolvedBy: null,
-        resolvedAt: null,
-        resolution: null
-      });
+    // Alert 2: Missing lot numbers - generate alert for EVERY empty lot field
+    if (emptyLotFields.length > 0) {
+      // Create individual alerts for each page with empty lot field
+      for (const emptyField of emptyLotFields) {
+        alerts.push({
+          id: this.generateAlertId(),
+          category: "missing_value",
+          severity: "high",
+          title: "Lot Number Missing",
+          message: `Lot number field "${emptyField.label}" is present but empty on page ${emptyField.pageNumber}. This field is important for traceability.`,
+          details: `Empty lot number field found: "${emptyField.label}"`,
+          source: emptyField.source,
+          relatedValues: [],
+          suggestedAction: "Enter the lot number for proper material tracking.",
+          ruleId: null,
+          formulaId: null,
+          isResolved: false,
+          resolvedBy: null,
+          resolvedAt: null,
+          resolution: null
+        });
+      }
     }
 
     // Alert 3: Cross-page consistency check
