@@ -13,6 +13,7 @@ import type {
   BatchDateBounds,
   VisualAnomaly,
 } from "@shared/schema";
+import { dynamicFormulaDetector } from "./dynamic-formula-detector";
 
 interface PageMetadata {
   extraction?: {
@@ -229,7 +230,9 @@ export class ValidationEngine {
     extractedText: string
   ): Promise<PageValidationResult> {
     const extractedValues = this.extractValues(pageNumber, metadata, classification, extractedText);
-    const detectedFormulas = this.detectFormulas(extractedValues, pageNumber, classification);
+    
+    const tables = metadata?.extraction?.tables || [];
+    const detectedFormulas = this.detectFormulas(extractedValues, pageNumber, classification, tables, extractedText);
     const alerts: ValidationAlert[] = [];
 
     for (const formula of detectedFormulas) {
@@ -524,7 +527,9 @@ export class ValidationEngine {
   private detectFormulas(
     values: ExtractedValue[],
     pageNumber: number,
-    sectionType: string
+    sectionType: string,
+    tables?: any[],
+    extractedText?: string
   ): DetectedFormula[] {
     const formulas: DetectedFormula[] = [];
 
@@ -542,6 +547,20 @@ export class ValidationEngine {
 
     const pressureDiffFormula = this.detectPressureDifferentialFormula(values, pageNumber, sectionType);
     if (pressureDiffFormula) formulas.push(pressureDiffFormula);
+
+    if (tables && tables.length > 0) {
+      try {
+        const dynamicFormulas = dynamicFormulaDetector.detectDynamicFormulas(
+          tables,
+          extractedText || "",
+          pageNumber,
+          sectionType
+        );
+        formulas.push(...dynamicFormulas);
+      } catch (error) {
+        console.error(`[ValidationEngine] Error detecting dynamic formulas on page ${pageNumber}:`, error);
+      }
+    }
 
     return formulas;
   }
@@ -890,7 +909,11 @@ export class ValidationEngine {
       concentration: "Concentration Calculation",
       weight_difference: "Weight Difference",
       time_duration: "Time Duration",
-      custom: "Custom Formula"
+      custom: "Custom Formula",
+      dynamic_formula: "Dynamic Formula",
+      assay_calculation: "Assay Calculation",
+      potency_calculation: "Potency Calculation",
+      lod_adjusted: "LOD-Adjusted Calculation"
     };
 
     return {

@@ -150,7 +150,11 @@ export const formulaTypes = [
   "concentration",
   "weight_difference",
   "time_duration",
-  "custom"
+  "custom",
+  "dynamic_formula",      // Formulas detected dynamically from page text
+  "assay_calculation",    // (100-LOD)×Value/100 pattern
+  "potency_calculation",  // A×Factor×1000/100 pattern
+  "lod_adjusted"          // Any LOD-adjusted calculation
 ] as const;
 
 export type FormulaType = typeof formulaTypes[number];
