@@ -10,6 +10,7 @@ import type {
   AlertCategory,
   AlertSeverity,
   SOPRule,
+  BatchDateBounds,
 } from "@shared/schema";
 
 interface PageMetadata {
@@ -2292,6 +2293,796 @@ export class ValidationEngine {
     
     this.sopRules.splice(index, 1);
     return true;
+  }
+
+  // ==========================================
+  // BATCH DATE BOUNDS EXTRACTION & VALIDATION
+  // ==========================================
+
+  /**
+   * Date patterns for extracting dates from batch records.
+   * Supports common formats: DD/MM/YY, DD/MM/YYYY, DD-MM-YY, etc.
+   * Handles OCR errors like |, l, I confused with 1, O confused with 0
+   */
+  private batchDatePatterns = [
+    // DD/MM/YY or DD/MM/YYYY (most common in pharma)
+    /(\d{1,2})\s*[/|\-\\|lI]\s*(\d{1,2})\s*[/|\-\\|lI]\s*(\d{2,4})/,
+    // DD.MM.YY or DD.MM.YYYY
+    /(\d{1,2})\s*\.\s*(\d{1,2})\s*\.\s*(\d{2,4})/,
+    // DD MMM YYYY (e.g., 24 Apr 2025)
+    /(\d{1,2})\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{2,4})/i,
+  ];
+
+  /**
+   * Time patterns for extracting times from batch records.
+   * Supports HH:MM, HH.MM, HH MM formats
+   */
+  private batchTimePatterns = [
+    // HH:MM or HH.MM
+    /(\d{1,2})\s*[:\.]\s*(\d{2})/,
+    // HH MM (space separated)
+    /(\d{1,2})\s+(\d{2})(?!\d)/,
+  ];
+
+  /**
+   * Field patterns that indicate batch commencement date/time
+   */
+  private commencementFieldPatterns = [
+    /date\s*[&]?\s*(?:and)?\s*time\s*(?:of)?\s*(?:batch)?\s*commencement/i,
+    /batch\s*commencement\s*(?:date|time)/i,
+    /commencement\s*(?:date|time)/i,
+    /start\s*(?:date|time)/i,
+    /manufacturing\s*start/i,
+    /production\s*start/i,
+  ];
+
+  /**
+   * Field patterns that indicate batch completion date/time
+   */
+  private completionFieldPatterns = [
+    /date\s*[&]?\s*(?:and)?\s*time\s*(?:of)?\s*(?:batch)?\s*completion/i,
+    /batch\s*completion\s*(?:date|time)/i,
+    /completion\s*(?:date|time)/i,
+    /end\s*(?:date|time)/i,
+    /manufacturing\s*end/i,
+    /production\s*end/i,
+  ];
+
+  /**
+   * Extract batch commencement and completion dates from page results.
+   * Uses parallel extraction from structured fields AND raw text with reconciliation.
+   * 
+   * @param pageResults - Array of page validation results
+   * @returns BatchDateBounds object with extracted dates and confidence
+   */
+  extractBatchDateBounds(pageResults: PageValidationResult[]): BatchDateBounds {
+    // Track extraction results from both sources
+    let structuredCommencement: { date: string; time: string; pageNumber: number } | null = null;
+    let structuredCompletion: { date: string; time: string; pageNumber: number } | null = null;
+    let textCommencement: { date: string; time: string; pageNumber: number } | null = null;
+    let textCompletion: { date: string; time: string; pageNumber: number } | null = null;
+
+    // Typically batch details are on page 1-3
+    const priorityPages = pageResults.filter(p => p.pageNumber <= 5);
+    const pagesToCheck = priorityPages.length > 0 ? priorityPages : pageResults.slice(0, 5);
+
+    for (const page of pagesToCheck) {
+      // === SOURCE 1: Structured form field extraction ===
+      for (const value of page.extractedValues) {
+        const fieldLabel = value.source.fieldLabel.toLowerCase();
+        
+        // Check for commencement field
+        if (this.commencementFieldPatterns.some(p => p.test(fieldLabel)) && !structuredCommencement) {
+          const parsed = this.parseDateTimeFromValue(value.rawValue);
+          if (parsed.date || parsed.time) {
+            structuredCommencement = {
+              date: parsed.date || "",
+              time: parsed.time || "",
+              pageNumber: page.pageNumber
+            };
+          }
+        }
+        
+        // Check for completion field
+        if (this.completionFieldPatterns.some(p => p.test(fieldLabel)) && !structuredCompletion) {
+          const parsed = this.parseDateTimeFromValue(value.rawValue);
+          if (parsed.date || parsed.time) {
+            structuredCompletion = {
+              date: parsed.date || "",
+              time: parsed.time || "",
+              pageNumber: page.pageNumber
+            };
+          }
+        }
+      }
+
+      // === SOURCE 2: Raw text scanning ===
+      if (page.extractedText && (!textCommencement || !textCompletion)) {
+        const textResults = this.scanTextForBatchDates(page.extractedText, page.pageNumber);
+        if (textResults.commencement && !textCommencement) {
+          textCommencement = textResults.commencement;
+        }
+        if (textResults.completion && !textCompletion) {
+          textCompletion = textResults.completion;
+        }
+      }
+    }
+
+    // === RECONCILIATION ===
+    const result = this.reconcileBatchDates(
+      structuredCommencement,
+      structuredCompletion,
+      textCommencement,
+      textCompletion
+    );
+
+    return result;
+  }
+
+  /**
+   * Parse a date and time from a single value string.
+   * Handles formats like "24/04/25 and 11:07" or "24/04/25 11:07"
+   */
+  private parseDateTimeFromValue(value: string): { date: string; time: string } {
+    let date = "";
+    let time = "";
+
+    // Normalize OCR errors: replace | l I with 1 in numeric contexts
+    let normalized = value
+      .replace(/[|lI](?=\d)/g, '1')
+      .replace(/(?<=\d)[|lI]/g, '1')
+      .replace(/O(?=\d)/g, '0')
+      .replace(/(?<=\d)O/g, '0');
+
+    // Try to extract date
+    for (const pattern of this.batchDatePatterns) {
+      const match = normalized.match(pattern);
+      if (match) {
+        if (match[3]) {
+          // DD/MM/YY format
+          date = `${match[1].padStart(2, '0')}/${match[2].padStart(2, '0')}/${match[3]}`;
+        } else if (match[2]) {
+          // DD MMM YYYY format - convert to standard
+          date = match[0];
+        }
+        break;
+      }
+    }
+
+    // Try to extract time
+    for (const pattern of this.batchTimePatterns) {
+      const match = normalized.match(pattern);
+      if (match) {
+        const hours = match[1].padStart(2, '0');
+        const minutes = match[2];
+        time = `${hours}:${minutes}`;
+        break;
+      }
+    }
+
+    return { date, time };
+  }
+
+  /**
+   * Scan raw text for batch commencement and completion dates.
+   * Looks for labeled lines like "Date & Time of Batch Commencement: 24/04/25 and 11:07"
+   */
+  private scanTextForBatchDates(
+    text: string,
+    pageNumber: number
+  ): {
+    commencement: { date: string; time: string; pageNumber: number } | null;
+    completion: { date: string; time: string; pageNumber: number } | null;
+  } {
+    const lines = text.split('\n');
+    let commencement: { date: string; time: string; pageNumber: number } | null = null;
+    let completion: { date: string; time: string; pageNumber: number } | null = null;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const normalizedLine = line.toLowerCase();
+
+      // Check for commencement pattern
+      if (this.commencementFieldPatterns.some(p => p.test(normalizedLine))) {
+        // Look in the same line after the label, or the next line
+        const valueText = this.extractValueAfterLabel(line) || (lines[i + 1] || "");
+        const parsed = this.parseDateTimeFromValue(valueText);
+        if (parsed.date || parsed.time) {
+          commencement = { date: parsed.date, time: parsed.time, pageNumber };
+        }
+      }
+
+      // Check for completion pattern
+      if (this.completionFieldPatterns.some(p => p.test(normalizedLine))) {
+        const valueText = this.extractValueAfterLabel(line) || (lines[i + 1] || "");
+        const parsed = this.parseDateTimeFromValue(valueText);
+        if (parsed.date || parsed.time) {
+          completion = { date: parsed.date, time: parsed.time, pageNumber };
+        }
+      }
+    }
+
+    return { commencement, completion };
+  }
+
+  /**
+   * Extract the value portion after a label (after colon or at end of line)
+   */
+  private extractValueAfterLabel(line: string): string {
+    // Try to split on colon
+    const colonIndex = line.lastIndexOf(':');
+    if (colonIndex !== -1) {
+      return line.substring(colonIndex + 1).trim();
+    }
+    return "";
+  }
+
+  /**
+   * Reconcile batch dates from structured and text extraction sources.
+   * Uses confidence scoring based on agreement between sources.
+   * 
+   * Confidence levels:
+   * - "high": BOTH sources (structured + text) found AND agree for BOTH commencement and completion
+   * - "medium": Only one source found, OR sources disagree
+   * - "low": No dates found at all
+   */
+  private reconcileBatchDates(
+    structuredCommencement: { date: string; time: string; pageNumber: number } | null,
+    structuredCompletion: { date: string; time: string; pageNumber: number } | null,
+    textCommencement: { date: string; time: string; pageNumber: number } | null,
+    textCompletion: { date: string; time: string; pageNumber: number } | null
+  ): BatchDateBounds {
+    let commencementDate: string | null = null;
+    let commencementTime: string | null = null;
+    let completionDate: string | null = null;
+    let completionTime: string | null = null;
+    let sourcePageNumber: number | null = null;
+    
+    // Track agreement status for confidence scoring
+    let commencementAgreed = false;
+    let completionAgreed = false;
+    let commencementHasBothSources = false;
+    let completionHasBothSources = false;
+
+    // Reconcile commencement dates
+    if (structuredCommencement && textCommencement) {
+      commencementHasBothSources = true;
+      // Both sources found commencement - check agreement
+      const dateMatch = this.normalizeDateForComparison(structuredCommencement.date) === 
+                        this.normalizeDateForComparison(textCommencement.date);
+      const timeMatch = this.normalizeTimeForComparison(structuredCommencement.time) === 
+                        this.normalizeTimeForComparison(textCommencement.time);
+      
+      if (dateMatch && timeMatch) {
+        commencementAgreed = true;
+      }
+      // Prefer structured data when available
+      commencementDate = structuredCommencement.date || textCommencement.date;
+      commencementTime = structuredCommencement.time || textCommencement.time;
+      sourcePageNumber = structuredCommencement.pageNumber;
+    } else if (structuredCommencement) {
+      // Only structured source available
+      commencementDate = structuredCommencement.date;
+      commencementTime = structuredCommencement.time;
+      sourcePageNumber = structuredCommencement.pageNumber;
+    } else if (textCommencement) {
+      // Only text source available
+      commencementDate = textCommencement.date;
+      commencementTime = textCommencement.time;
+      sourcePageNumber = textCommencement.pageNumber;
+    }
+
+    // Reconcile completion dates
+    if (structuredCompletion && textCompletion) {
+      completionHasBothSources = true;
+      const dateMatch = this.normalizeDateForComparison(structuredCompletion.date) === 
+                        this.normalizeDateForComparison(textCompletion.date);
+      const timeMatch = this.normalizeTimeForComparison(structuredCompletion.time) === 
+                        this.normalizeTimeForComparison(textCompletion.time);
+      
+      if (dateMatch && timeMatch) {
+        completionAgreed = true;
+      }
+      completionDate = structuredCompletion.date || textCompletion.date;
+      completionTime = structuredCompletion.time || textCompletion.time;
+      sourcePageNumber = sourcePageNumber || structuredCompletion.pageNumber;
+    } else if (structuredCompletion) {
+      completionDate = structuredCompletion.date;
+      completionTime = structuredCompletion.time;
+      sourcePageNumber = sourcePageNumber || structuredCompletion.pageNumber;
+    } else if (textCompletion) {
+      completionDate = textCompletion.date;
+      completionTime = textCompletion.time;
+      sourcePageNumber = sourcePageNumber || textCompletion.pageNumber;
+    }
+
+    // Determine extraction confidence based on source agreement
+    let extractionConfidence: "high" | "medium" | "low";
+    
+    if (!commencementDate && !completionDate) {
+      // No dates found at all
+      extractionConfidence = "low";
+    } else if (commencementHasBothSources && completionHasBothSources && commencementAgreed && completionAgreed) {
+      // BOTH dates have BOTH sources AND they agree - this is HIGH confidence
+      extractionConfidence = "high";
+    } else if ((commencementHasBothSources && commencementAgreed) || (completionHasBothSources && completionAgreed)) {
+      // At least one date has both sources agreeing - medium confidence
+      extractionConfidence = "medium";
+    } else {
+      // Only single source available for both, or sources disagree - medium confidence
+      // (still usable but needs verification)
+      extractionConfidence = "medium";
+    }
+
+    // Generate ISO timestamps
+    const commencementTimestamp = this.createISOTimestamp(commencementDate, commencementTime);
+    const completionTimestamp = this.createISOTimestamp(completionDate, completionTime);
+
+    return {
+      commencementDate: commencementDate || null,
+      commencementTime: commencementTime || null,
+      completionDate: completionDate || null,
+      completionTime: completionTime || null,
+      commencementTimestamp,
+      completionTimestamp,
+      extractionConfidence,
+      sourcePageNumber
+    };
+  }
+
+  /**
+   * Normalize a date string for comparison (handles OCR variations)
+   */
+  private normalizeDateForComparison(date: string): string {
+    if (!date) return "";
+    return date
+      .replace(/\s+/g, '')
+      .replace(/[|lI]/g, '1')
+      .replace(/O/g, '0')
+      .replace(/[-\\]/g, '/')
+      .toLowerCase();
+  }
+
+  /**
+   * Normalize a time string for comparison
+   */
+  private normalizeTimeForComparison(time: string): string {
+    if (!time) return "";
+    return time
+      .replace(/\s+/g, '')
+      .replace(/[|lI]/g, '1')
+      .replace(/O/g, '0')
+      .replace(/\./g, ':');
+  }
+
+  /**
+   * Create an ISO timestamp from date and time strings
+   */
+  private createISOTimestamp(date: string | null, time: string | null): string | null {
+    if (!date) return null;
+
+    try {
+      // Parse date (expecting DD/MM/YY or DD/MM/YYYY format)
+      const dateParts = date.match(/(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);
+      if (!dateParts) return null;
+
+      const day = parseInt(dateParts[1], 10);
+      const month = parseInt(dateParts[2], 10);
+      let year = parseInt(dateParts[3], 10);
+      
+      // Handle 2-digit year
+      if (year < 100) {
+        year = year > 50 ? 1900 + year : 2000 + year;
+      }
+
+      // Parse time (expecting HH:MM format)
+      let hours = 0, minutes = 0;
+      if (time) {
+        const timeParts = time.match(/(\d{1,2})[:\.](\d{2})/);
+        if (timeParts) {
+          hours = parseInt(timeParts[1], 10);
+          minutes = parseInt(timeParts[2], 10);
+        }
+      }
+
+      const dateObj = new Date(year, month - 1, day, hours, minutes);
+      return dateObj.toISOString();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Validate that all dates extracted from the document fall within the batch window.
+   * Returns alerts for any dates outside the commencement-to-completion range.
+   * 
+   * @param pageResults - Array of page validation results
+   * @param batchBounds - The extracted batch date bounds
+   * @returns Array of validation alerts for date violations
+   */
+  validateDatesAgainstBatchWindow(
+    pageResults: PageValidationResult[],
+    batchBounds: BatchDateBounds
+  ): ValidationAlert[] {
+    const alerts: ValidationAlert[] = [];
+
+    // Skip validation if we don't have both bounds
+    if (!batchBounds.commencementTimestamp || !batchBounds.completionTimestamp) {
+      return alerts;
+    }
+
+    const commencementDate = new Date(batchBounds.commencementTimestamp);
+    const completionDate = new Date(batchBounds.completionTimestamp);
+
+    // Collect all date/datetime values from the document
+    for (const page of pageResults) {
+      for (const value of page.extractedValues) {
+        if (value.valueType === "date" || value.valueType === "datetime") {
+          const parsedDate = this.parseExtractedDate(value.rawValue);
+          
+          if (parsedDate) {
+            // Check if date is before commencement
+            if (parsedDate < commencementDate) {
+              // Allow some tolerance for dates that are the same day
+              const daysDiff = Math.abs((commencementDate.getTime() - parsedDate.getTime()) / (1000 * 60 * 60 * 24));
+              if (daysDiff >= 1) {
+                alerts.push(this.createDateViolationAlert(
+                  value,
+                  page.pageNumber,
+                  "before",
+                  batchBounds.commencementDate || "",
+                  batchBounds.commencementTime || ""
+                ));
+              }
+            }
+            // Check if date is after completion
+            else if (parsedDate > completionDate) {
+              const daysDiff = Math.abs((parsedDate.getTime() - completionDate.getTime()) / (1000 * 60 * 60 * 24));
+              if (daysDiff >= 1) {
+                alerts.push(this.createDateViolationAlert(
+                  value,
+                  page.pageNumber,
+                  "after",
+                  batchBounds.completionDate || "",
+                  batchBounds.completionTime || ""
+                ));
+              }
+            }
+          }
+        }
+      }
+
+      // Also scan raw text for dates
+      if (page.extractedText) {
+        const textDates = this.extractAllDatesFromText(page.extractedText);
+        for (const textDate of textDates) {
+          const parsedDate = this.parseExtractedDate(textDate.value);
+          
+          if (parsedDate) {
+            if (parsedDate < commencementDate) {
+              const daysDiff = Math.abs((commencementDate.getTime() - parsedDate.getTime()) / (1000 * 60 * 60 * 24));
+              if (daysDiff >= 1) {
+                alerts.push({
+                  id: this.generateAlertId(),
+                  category: "sequence_error",
+                  severity: "high",
+                  title: "Date Before Batch Commencement",
+                  message: `Date "${textDate.value}" on page ${page.pageNumber} is before batch commencement (${batchBounds.commencementDate} ${batchBounds.commencementTime || ""})`,
+                  details: JSON.stringify({
+                    foundDate: textDate.value,
+                    batchCommencement: `${batchBounds.commencementDate} ${batchBounds.commencementTime || ""}`.trim(),
+                    batchCompletion: `${batchBounds.completionDate} ${batchBounds.completionTime || ""}`.trim(),
+                    context: textDate.context
+                  }),
+                  source: {
+                    pageNumber: page.pageNumber,
+                    sectionType: "text",
+                    fieldLabel: textDate.context,
+                    boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+                    surroundingContext: textDate.context
+                  },
+                  relatedValues: [],
+                  suggestedAction: "Verify this date is correct. If it predates batch start, investigate if it's a pre-batch activity or data entry error.",
+                  ruleId: "batch_date_window_violation",
+                  formulaId: null,
+                  isResolved: false,
+                  resolvedBy: null,
+                  resolvedAt: null,
+                  resolution: null
+                });
+              }
+            } else if (parsedDate > completionDate) {
+              const daysDiff = Math.abs((parsedDate.getTime() - completionDate.getTime()) / (1000 * 60 * 60 * 24));
+              if (daysDiff >= 1) {
+                alerts.push({
+                  id: this.generateAlertId(),
+                  category: "sequence_error",
+                  severity: "high",
+                  title: "Date After Batch Completion",
+                  message: `Date "${textDate.value}" on page ${page.pageNumber} is after batch completion (${batchBounds.completionDate} ${batchBounds.completionTime || ""})`,
+                  details: JSON.stringify({
+                    foundDate: textDate.value,
+                    batchCommencement: `${batchBounds.commencementDate} ${batchBounds.commencementTime || ""}`.trim(),
+                    batchCompletion: `${batchBounds.completionDate} ${batchBounds.completionTime || ""}`.trim(),
+                    context: textDate.context
+                  }),
+                  source: {
+                    pageNumber: page.pageNumber,
+                    sectionType: "text",
+                    fieldLabel: textDate.context,
+                    boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+                    surroundingContext: textDate.context
+                  },
+                  relatedValues: [],
+                  suggestedAction: "Verify this date is correct. If it postdates batch completion, investigate if it's a post-batch review or data entry error.",
+                  ruleId: "batch_date_window_violation",
+                  formulaId: null,
+                  isResolved: false,
+                  resolvedBy: null,
+                  resolvedAt: null,
+                  resolution: null
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return alerts;
+  }
+
+  /**
+   * Parse an extracted date string into a Date object
+   */
+  private parseExtractedDate(dateStr: string): Date | null {
+    if (!dateStr) return null;
+
+    // Normalize OCR errors
+    const normalized = dateStr
+      .replace(/[|lI](?=\d)/g, '1')
+      .replace(/(?<=\d)[|lI]/g, '1')
+      .replace(/O(?=\d)/g, '0')
+      .replace(/(?<=\d)O/g, '0');
+
+    // Try DD/MM/YY or DD/MM/YYYY format
+    const match = normalized.match(/(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);
+    if (match) {
+      const day = parseInt(match[1], 10);
+      const month = parseInt(match[2], 10);
+      let year = parseInt(match[3], 10);
+      
+      if (year < 100) {
+        year = year > 50 ? 1900 + year : 2000 + year;
+      }
+
+      return new Date(year, month - 1, day);
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract all date occurrences from raw text with context
+   */
+  private extractAllDatesFromText(text: string): Array<{ value: string; context: string }> {
+    const results: Array<{ value: string; context: string }> = [];
+    const lines = text.split('\n');
+
+    // Skip lines that contain batch commencement/completion labels
+    const skipPatterns = [
+      ...this.commencementFieldPatterns,
+      ...this.completionFieldPatterns
+    ];
+
+    for (const line of lines) {
+      // Skip if this is a commencement/completion line
+      if (skipPatterns.some(p => p.test(line.toLowerCase()))) {
+        continue;
+      }
+
+      // Find all dates in the line using exec() for compatibility
+      for (const pattern of this.batchDatePatterns) {
+        const regex = new RegExp(pattern.source, 'gi');
+        let match: RegExpExecArray | null;
+        while ((match = regex.exec(line)) !== null) {
+          const context = line.trim().substring(0, 50);
+          results.push({
+            value: match[0],
+            context
+          });
+        }
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Create a date violation alert
+   */
+  private createDateViolationAlert(
+    value: ExtractedValue,
+    pageNumber: number,
+    violationType: "before" | "after",
+    boundDate: string,
+    boundTime: string
+  ): ValidationAlert {
+    const title = violationType === "before" 
+      ? "Date Before Batch Commencement"
+      : "Date After Batch Completion";
+    
+    const message = violationType === "before"
+      ? `Date "${value.rawValue}" on page ${pageNumber} is before batch commencement (${boundDate} ${boundTime})`
+      : `Date "${value.rawValue}" on page ${pageNumber} is after batch completion (${boundDate} ${boundTime})`;
+
+    const action = violationType === "before"
+      ? "Verify this date is correct. If it predates batch start, investigate if it's a pre-batch activity or data entry error."
+      : "Verify this date is correct. If it postdates batch completion, investigate if it's a post-batch review or data entry error.";
+
+    return {
+      id: this.generateAlertId(),
+      category: "sequence_error",
+      severity: "high",
+      title,
+      message,
+      details: JSON.stringify({
+        foundDate: value.rawValue,
+        fieldLabel: value.source.fieldLabel,
+        boundaryType: violationType,
+        boundaryDate: `${boundDate} ${boundTime}`.trim()
+      }),
+      source: {
+        ...value.source,
+        pageNumber
+      },
+      relatedValues: [value],
+      suggestedAction: action,
+      ruleId: "batch_date_window_violation",
+      formulaId: null,
+      isResolved: false,
+      resolvedBy: null,
+      resolvedAt: null,
+      resolution: null
+    };
+  }
+
+  /**
+   * Generate alerts for batch date extraction issues
+   */
+  generateBatchDateExtractionAlerts(batchBounds: BatchDateBounds): ValidationAlert[] {
+    const alerts: ValidationAlert[] = [];
+
+    // Alert if commencement date is missing (CRITICAL - required for all date validation)
+    if (!batchBounds.commencementDate) {
+      alerts.push({
+        id: this.generateAlertId(),
+        category: "missing_value",
+        severity: "critical",
+        title: "Batch Commencement Date Missing",
+        message: "Could not extract the Date & Time of Batch Commencement from the document. This is required for validating all other dates.",
+        details: JSON.stringify({
+          issue: "missing_commencement_date",
+          impact: "Cannot validate that other dates fall within batch manufacturing window",
+          expectedLocation: "Batch Details section (typically page 2)"
+        }),
+        source: {
+          pageNumber: batchBounds.sourcePageNumber || 2,
+          sectionType: "batch_details",
+          fieldLabel: "Date & Time of Batch Commencement",
+          boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+          surroundingContext: "Batch Details Section"
+        },
+        relatedValues: [],
+        suggestedAction: "Verify the batch details page is included and the commencement date/time is legible. Re-scan if necessary.",
+        ruleId: "batch_date_extraction_missing",
+        formulaId: null,
+        isResolved: false,
+        resolvedBy: null,
+        resolvedAt: null,
+        resolution: null
+      });
+    }
+
+    // Alert if completion date is missing (CRITICAL - required for all date validation)
+    if (!batchBounds.completionDate) {
+      alerts.push({
+        id: this.generateAlertId(),
+        category: "missing_value",
+        severity: "critical",
+        title: "Batch Completion Date Missing",
+        message: "Could not extract the Date & Time of Batch Completion from the document. This is required for validating all other dates.",
+        details: JSON.stringify({
+          issue: "missing_completion_date",
+          impact: "Cannot validate that other dates fall within batch manufacturing window",
+          expectedLocation: "Batch Details section (typically page 2)"
+        }),
+        source: {
+          pageNumber: batchBounds.sourcePageNumber || 2,
+          sectionType: "batch_details",
+          fieldLabel: "Date & Time of Batch Completion",
+          boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+          surroundingContext: "Batch Details Section"
+        },
+        relatedValues: [],
+        suggestedAction: "Verify the batch details page is included and the completion date/time is legible. Re-scan if necessary.",
+        ruleId: "batch_date_extraction_missing",
+        formulaId: null,
+        isResolved: false,
+        resolvedBy: null,
+        resolvedAt: null,
+        resolution: null
+      });
+    }
+
+    // Alert if extraction confidence is low
+    if (batchBounds.extractionConfidence === "low" && (batchBounds.commencementDate || batchBounds.completionDate)) {
+      alerts.push({
+        id: this.generateAlertId(),
+        category: "data_quality",
+        severity: "medium",
+        title: "Low Confidence Batch Date Extraction",
+        message: "Batch commencement/completion dates were extracted with low confidence",
+        details: JSON.stringify({
+          commencementDate: batchBounds.commencementDate,
+          commencementTime: batchBounds.commencementTime,
+          completionDate: batchBounds.completionDate,
+          completionTime: batchBounds.completionTime,
+          confidence: batchBounds.extractionConfidence
+        }),
+        source: {
+          pageNumber: batchBounds.sourcePageNumber || 2,
+          sectionType: "batch_details",
+          fieldLabel: "Batch Dates",
+          boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+          surroundingContext: "Extracted from batch details"
+        },
+        relatedValues: [],
+        suggestedAction: "Verify the extracted dates are correct by reviewing the original document.",
+        ruleId: "batch_date_confidence",
+        formulaId: null,
+        isResolved: false,
+        resolvedBy: null,
+        resolvedAt: null,
+        resolution: null
+      });
+    }
+
+    // Alert if extraction shows discrepancy between sources (medium confidence means disagreement)
+    if (batchBounds.extractionConfidence === "medium" && batchBounds.commencementDate && batchBounds.completionDate) {
+      alerts.push({
+        id: this.generateAlertId(),
+        category: "data_quality",
+        severity: "medium",
+        title: "Batch Date Extraction Reconciliation Issue",
+        message: "Structured form extraction and raw text scanning found slightly different batch dates. Please verify.",
+        details: JSON.stringify({
+          commencementDate: batchBounds.commencementDate,
+          commencementTime: batchBounds.commencementTime,
+          completionDate: batchBounds.completionDate,
+          completionTime: batchBounds.completionTime,
+          confidence: batchBounds.extractionConfidence,
+          note: "Dates shown are the reconciled values. Review original document to confirm."
+        }),
+        source: {
+          pageNumber: batchBounds.sourcePageNumber || 2,
+          sectionType: "batch_details",
+          fieldLabel: "Batch Dates",
+          boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+          surroundingContext: "Reconciliation between extraction methods"
+        },
+        relatedValues: [],
+        suggestedAction: "Review the batch details page to confirm the commencement and completion dates/times are correct.",
+        ruleId: "batch_date_reconciliation",
+        formulaId: null,
+        isResolved: false,
+        resolvedBy: null,
+        resolvedAt: null,
+        resolution: null
+      });
+    }
+
+    return alerts;
   }
 }
 

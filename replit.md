@@ -34,7 +34,13 @@ The system is built on a React, Express, PostgreSQL, and TypeScript stack.
     - **Secure Image Serving**: Implements hardened path validation to prevent directory traversal vulnerabilities.
     - **Raw Text Scanning**: Enhanced detection of batch/lot numbers from raw OCR text, handling typos, multi-line layouts, and generating alerts for missing values.
     - **Parallel Extraction with Reconciliation**: For batch/lot number validation, runs BOTH structured form field extraction AND raw text scanning in parallel. If both agree, high confidence. If they disagree, generates "Data Quality" reconciliation alert for human review. Results include sourceType ("structured" or "text-derived") and confidence level ("high", "medium", "low").
-    - **Metadata Storage**: Rich extraction and layout data are stored in PostgreSQL using JSONB fields.
+    - **Batch Date Bounds Extraction**: Extracts "Date & Time of Batch Commencement" and "Date & Time of Batch Completion" from the batch details page (typically page 2) using parallel extraction (structured + raw text) with reconciliation. These dates define the authoritative manufacturing window for the entire batch.
+    - **Temporal Validation**: All other dates extracted from any page are validated against the batch commencement/completion window. Alerts are generated for dates that fall outside this window with "sequence_error" category.
+    - **Confidence Scoring for Batch Dates**: 
+      - "high": Both sources (structured + text) found AND agree for BOTH commencement and completion
+      - "medium": Only one source available, OR sources disagree
+      - "low": No dates found at all
+    - **Metadata Storage**: Rich extraction and layout data are stored in PostgreSQL using JSONB fields. Batch date bounds are stored at document level.
 
 ### System Design Choices
 - **Backend**: Implemented with Express, integrating Drizzle ORM for database interactions.

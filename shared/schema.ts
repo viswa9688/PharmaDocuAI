@@ -3,6 +3,18 @@ import { pgTable, text, varchar, timestamp, jsonb, integer, boolean } from "driz
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// Batch date bounds extracted from batch details page
+export type BatchDateBounds = {
+  commencementDate: string | null;       // Date of batch commencement (DD/MM/YY format)
+  commencementTime: string | null;       // Time of batch commencement (HH:MM format)
+  completionDate: string | null;         // Date of batch completion
+  completionTime: string | null;         // Time of batch completion
+  commencementTimestamp: string | null;  // ISO timestamp combining date + time
+  completionTimestamp: string | null;    // ISO timestamp combining date + time
+  extractionConfidence: "high" | "medium" | "low";  // Confidence based on parallel extraction reconciliation
+  sourcePageNumber: number | null;       // Page number where batch details were found
+};
+
 // Document table - stores uploaded batch record PDFs
 export const documents = pgTable("documents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -13,6 +25,8 @@ export const documents = pgTable("documents", {
   totalPages: integer("total_pages"),
   processedPages: integer("processed_pages").default(0),
   errorMessage: text("error_message"),
+  // Batch date bounds for temporal validation
+  batchDateBounds: jsonb("batch_date_bounds").$type<BatchDateBounds>(),
 });
 
 // Page classifications

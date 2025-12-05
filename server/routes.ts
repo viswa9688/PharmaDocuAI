@@ -256,12 +256,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
       );
 
+      // Extract batch commencement/completion dates for temporal validation
+      const batchDateBounds = validationEngine.extractBatchDateBounds(pageResults);
+      
+      // Validate all dates against batch window
+      const batchDateAlerts = validationEngine.validateDatesAgainstBatchWindow(pageResults, batchDateBounds);
+      
+      // Generate alerts for batch date extraction issues
+      const extractionAlerts = validationEngine.generateBatchDateExtractionAlerts(batchDateBounds);
+
       // Get document-level summary
       const summary = await validationEngine.validateDocument(req.params.id, pageResults);
+      
+      // Add batch date alerts to cross-page issues
+      summary.crossPageIssues = [
+        ...summary.crossPageIssues,
+        ...batchDateAlerts,
+        ...extractionAlerts
+      ];
+      summary.totalAlerts += batchDateAlerts.length + extractionAlerts.length;
+
+      // Update alert counts
+      for (const alert of [...batchDateAlerts, ...extractionAlerts]) {
+        summary.alertsBySeverity[alert.severity]++;
+        summary.alertsByCategory[alert.category]++;
+      }
+
+      // Store batch date bounds in document for reference
+      if (batchDateBounds.commencementDate || batchDateBounds.completionDate) {
+        await storage.updateDocument(req.params.id, { batchDateBounds });
+      }
 
       res.json({
         summary,
         pageResults,
+        batchDateBounds,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
