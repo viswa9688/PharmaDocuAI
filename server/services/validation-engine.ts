@@ -928,8 +928,39 @@ export class ValidationEngine {
   }
 
   /**
+   * Normalize a serial identifier (batch number, lot number) to handle common OCR confusions.
+   * This allows fuzzy matching of values that are the same but OCR read differently.
+   * 
+   * Handles:
+   * - I ↔ 1 (letter I vs digit one)
+   * - O ↔ 0 (letter O vs digit zero)
+   * - ( → C (parenthesis misread as C at start)
+   * - Removes spaces
+   * - Uppercase normalization
+   * 
+   * @param value - The raw value to normalize
+   * @returns Object with normalized (canonical) value and original value
+   */
+  private normalizeSerialIdentifier(value: string): { canonical: string; original: string } {
+    const original = value.trim().toUpperCase();
+    
+    let canonical = original
+      // Remove all spaces
+      .replace(/\s+/g, '')
+      // Replace opening parenthesis with C (common OCR confusion at start)
+      .replace(/^\(/, 'C')
+      // Replace letter I with digit 1 (very common OCR confusion)
+      .replace(/I/g, '1')
+      // Replace letter O with digit 0 (common OCR confusion)
+      .replace(/O/g, '0');
+    
+    return { canonical, original };
+  }
+
+  /**
    * Resolve majority value from a set of values across pages using frequency analysis.
    * Implements majority-voting logic to determine the "expected" correct value.
+   * Uses OCR-aware normalization to group visually similar values together.
    * 
    * @param valueLabel - Label for the value type (e.g., "Batch Number", "Lot Number")
    * @param values - Array of values with their page numbers and sources
@@ -958,25 +989,28 @@ export class ValidationEngine {
     }>;
     isTie: boolean;
     tiedValues: string[];
-    allValues: Map<string, Array<{ pageNumber: number; source: SourceLocation; sourceType: "structured" | "text-derived" }>>;
+    allValues: Map<string, Array<{ pageNumber: number; source: SourceLocation; sourceType: "structured" | "text-derived"; originalValue: string }>>;
   } {
-    // Count frequency of each normalized value
+    // Count frequency of each normalized value using OCR-aware canonicalization
+    // This groups values like "C251RH4004", "C25IRH4004", "(25IRH 4004" together
     const frequencyMap = new Map<string, Array<{
       pageNumber: number;
       source: SourceLocation;
       sourceType: "structured" | "text-derived";
+      originalValue: string; // Keep original for display
     }>>();
     
     for (const item of values) {
-      // Normalize value: uppercase, trim whitespace
-      const normalizedValue = item.value.trim().toUpperCase();
-      if (!frequencyMap.has(normalizedValue)) {
-        frequencyMap.set(normalizedValue, []);
+      // Use OCR-aware normalization to handle I↔1, O↔0, (→C, spaces
+      const { canonical, original } = this.normalizeSerialIdentifier(item.value);
+      if (!frequencyMap.has(canonical)) {
+        frequencyMap.set(canonical, []);
       }
-      frequencyMap.get(normalizedValue)!.push({
+      frequencyMap.get(canonical)!.push({
         pageNumber: item.pageNumber,
         source: item.source,
-        sourceType: item.sourceType
+        sourceType: item.sourceType,
+        originalValue: original // Store original for audit
       });
     }
 
@@ -1042,7 +1076,8 @@ export class ValidationEngine {
       };
     }
 
-    // Identify outlier pages (pages with non-majority values)
+    // Identify outlier pages (pages with non-majority canonical values)
+    // Use original value for display, canonical for comparison
     const outlierPages: Array<{
       pageNumber: number;
       foundValue: string;
@@ -1050,12 +1085,12 @@ export class ValidationEngine {
       sourceType: "structured" | "text-derived";
     }> = [];
 
-    for (const [value, entries] of Array.from(frequencyMap.entries())) {
-      if (value !== maxValue) {
+    for (const [canonicalValue, entries] of Array.from(frequencyMap.entries())) {
+      if (canonicalValue !== maxValue) {
         for (const entry of entries) {
           outlierPages.push({
             pageNumber: entry.pageNumber,
-            foundValue: value,
+            foundValue: entry.originalValue, // Use original value for display
             source: entry.source,
             sourceType: entry.sourceType
           });
