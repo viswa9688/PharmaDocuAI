@@ -2717,8 +2717,18 @@ export class ValidationEngine {
     const commencementDate = new Date(batchBounds.commencementTimestamp);
     const completionDate = new Date(batchBounds.completionTimestamp);
 
+    // Pages to exclude from date window validation:
+    // - Page 1: Contains document metadata (issue date, revision date) which naturally predates manufacturing
+    // - Page 2: Contains the batch details section with commencement/completion dates themselves
+    const excludedPages = [1, 2];
+
     // Collect all date/datetime values from the document
     for (const page of pageResults) {
+      // Skip excluded pages (document metadata and batch details)
+      if (excludedPages.includes(page.pageNumber)) {
+        continue;
+      }
+
       for (const value of page.extractedValues) {
         if (value.valueType === "date" || value.valueType === "datetime") {
           const parsedDate = this.parseExtractedDate(value.rawValue);
