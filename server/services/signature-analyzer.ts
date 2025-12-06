@@ -464,7 +464,7 @@ export class SignatureAnalyzer {
 
   /**
    * Detect standalone signature fields (not in tables).
-   * Looks for patterns like "Done By PD S/D: ____" in text blocks.
+   * Looks for patterns like "Done By PD S/D: ____" in text blocks and form fields.
    */
   private detectStandaloneSignatureFields(data: ExtractedApprovalData): SignatureField[] {
     const fields: SignatureField[] = [];
@@ -478,9 +478,66 @@ export class SignatureAnalyzer {
       /done\s+by/i,
       /checked\s+by/i,
       /verified\s+by/i,
+      /recorded\s+by/i,
     ];
 
-    // Get all text elements
+    // First, check form fields directly - these have name/value pairs
+    // If a form field's name matches a signature pattern AND has a value, it's signed
+    if (data.formFields) {
+      for (const field of data.formFields) {
+        const fieldName = (field.fieldName || '').trim();
+        const fieldValue = (field.fieldValue || '').trim();
+        
+        // Skip abbreviation definitions
+        if (this.isAbbreviationDefinitionText(fieldName)) {
+          continue;
+        }
+        
+        for (const pattern of standalonePatterns) {
+          if (pattern.test(fieldName)) {
+            const labelKey = fieldName.toLowerCase();
+            if (processedLabels.has(labelKey)) continue;
+            processedLabels.add(labelKey);
+            
+            // Check if field has ANY value (signature, date, or any text)
+            const hasValue = fieldValue.length > 0;
+            
+            // Check for date in the value
+            let dateText: string | undefined;
+            for (const datePattern of this.datePatterns) {
+              const match = fieldValue.match(datePattern);
+              if (match) {
+                dateText = match[0];
+                break;
+              }
+            }
+            
+            // Also check nearby handwritten content as fallback
+            const hasNearbyContent = this.hasNearbySignatureContent(
+              field.nameBoundingBox,
+              data.handwrittenRegions,
+              data.signatures,
+              []
+            );
+            
+            const isSigned = hasValue || hasNearbyContent;
+            
+            console.log(`[SignatureAnalyzer] Form field "${fieldName}" value="${fieldValue.substring(0, 20)}..." isSigned=${isSigned}`);
+            
+            fields.push({
+              fieldLabel: fieldName,
+              isSigned,
+              dateText,
+              boundingBox: field.nameBoundingBox,
+              confidence: hasValue ? 95 : 70,
+            });
+            break;
+          }
+        }
+      }
+    }
+
+    // Also check text blocks for signature labels
     const textElements: Array<{ text: string; boundingBox?: BoundingBox }> = [];
 
     if (data.textBlocks) {
@@ -491,19 +548,10 @@ export class SignatureAnalyzer {
       }
     }
 
-    if (data.formFields) {
-      for (const field of data.formFields) {
-        if (field.fieldName) {
-          textElements.push({ text: field.fieldName, boundingBox: field.nameBoundingBox });
-        }
-      }
-    }
-
-    // Check for labels that match signature field patterns
+    // Check for labels that match signature field patterns in text blocks
     for (const element of textElements) {
       // Skip abbreviation-definition text (e.g., "Ckd. By Checked By")
       if (this.isAbbreviationDefinitionText(element.text)) {
-        console.log(`[SignatureAnalyzer] Skipping abbreviation-definition text block: "${element.text.substring(0, 50)}..."`);
         continue;
       }
       
@@ -521,7 +569,7 @@ export class SignatureAnalyzer {
             textElements
           );
 
-          // Check for date in text
+          // Check for date in text (sometimes the date is part of the same text block)
           let dateText: string | undefined;
           for (const datePattern of this.datePatterns) {
             const match = element.text.match(datePattern);
