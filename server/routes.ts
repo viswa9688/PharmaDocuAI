@@ -263,6 +263,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
             result.alerts.push(...visualAlerts);
           }
           
+          // Run signature analysis on-the-fly (works for both new and old documents)
+          let signatureFields = metadata.approvals?.signatureFields;
+          
+          // If signatureFields not present, run analyzer now using stored extraction data
+          if (!signatureFields && metadata.extraction) {
+            try {
+              const approvalAnalysis = signatureAnalyzer.analyze({
+                tables: metadata.extraction.tables,
+                handwrittenRegions: metadata.extraction.handwrittenRegions,
+                signatures: metadata.extraction.signatures,
+                formFields: metadata.extraction.formFields,
+                textBlocks: metadata.layoutAnalysis?.textBlocks,
+              });
+              signatureFields = approvalAnalysis.signatureFields;
+            } catch (err) {
+              console.error(`Signature analysis failed for page ${page.pageNumber}:`, err);
+            }
+          }
+          
+          // Add signature alerts for missing signatures
+          if (signatureFields && Array.isArray(signatureFields)) {
+            for (const field of signatureFields) {
+              if (!field.isSigned) {
+                result.alerts.push({
+                  id: `sig-missing-${page.pageNumber}-${field.fieldLabel}`,
+                  category: "missing_value",
+                  severity: "high",
+                  title: "Missing Signature",
+                  message: `Signature field "${field.fieldLabel}" is empty on Page ${page.pageNumber}`,
+                  details: `Field: ${field.fieldLabel}${field.rowIndex !== undefined ? `, Row: ${field.rowIndex}` : ''}`,
+                  source: {
+                    pageNumber: page.pageNumber,
+                    sectionType: page.classification || "unknown",
+                    fieldLabel: field.fieldLabel,
+                    boundingBox: field.boundingBox || { x: 0, y: 0, width: 0, height: 0 },
+                    surroundingContext: "",
+                  },
+                  relatedValues: [],
+                  suggestedAction: "Obtain signature for this field",
+                  ruleId: "signature_required",
+                  formulaId: null,
+                  isResolved: false,
+                  resolvedBy: null,
+                  resolvedAt: null,
+                  resolution: null,
+                });
+              }
+            }
+            
+            // Attach signatureFields to result metadata for UI consumption
+            if (!result.metadata) {
+              (result as any).metadata = {};
+            }
+            if (!(result as any).metadata.approvals) {
+              (result as any).metadata.approvals = {};
+            }
+            (result as any).metadata.approvals.signatureFields = signatureFields;
+          }
+          
           return result;
         })
       );
@@ -337,6 +396,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (metadata.visualAnomalies && Array.isArray(metadata.visualAnomalies) && metadata.visualAnomalies.length > 0) {
         const visualAlerts = validationEngine.createVisualAnomalyAlerts(metadata.visualAnomalies);
         result.alerts.push(...visualAlerts);
+      }
+      
+      // Run signature analysis on-the-fly (works for both new and old documents)
+      let signatureFields = metadata.approvals?.signatureFields;
+      
+      // If signatureFields not present, run analyzer now using stored extraction data
+      if (!signatureFields && metadata.extraction) {
+        try {
+          const approvalAnalysis = signatureAnalyzer.analyze({
+            tables: metadata.extraction.tables,
+            handwrittenRegions: metadata.extraction.handwrittenRegions,
+            signatures: metadata.extraction.signatures,
+            formFields: metadata.extraction.formFields,
+            textBlocks: metadata.layoutAnalysis?.textBlocks,
+          });
+          signatureFields = approvalAnalysis.signatureFields;
+        } catch (err) {
+          console.error(`Signature analysis failed for page ${page.pageNumber}:`, err);
+        }
+      }
+      
+      // Add signature alerts for missing signatures
+      if (signatureFields && Array.isArray(signatureFields)) {
+        for (const field of signatureFields) {
+          if (!field.isSigned) {
+            result.alerts.push({
+              id: `sig-missing-${page.pageNumber}-${field.fieldLabel}`,
+              category: "missing_value",
+              severity: "high",
+              title: "Missing Signature",
+              message: `Signature field "${field.fieldLabel}" is empty on Page ${page.pageNumber}`,
+              details: `Field: ${field.fieldLabel}${field.rowIndex !== undefined ? `, Row: ${field.rowIndex}` : ''}`,
+              source: {
+                pageNumber: page.pageNumber,
+                sectionType: page.classification || "unknown",
+                fieldLabel: field.fieldLabel,
+                boundingBox: field.boundingBox || { x: 0, y: 0, width: 0, height: 0 },
+                surroundingContext: "",
+              },
+              relatedValues: [],
+              suggestedAction: "Obtain signature for this field",
+              ruleId: "signature_required",
+              formulaId: null,
+              isResolved: false,
+              resolvedBy: null,
+              resolvedAt: null,
+              resolution: null,
+            });
+          }
+        }
+        
+        // Attach signatureFields to result metadata for UI consumption
+        if (!result.metadata) {
+          (result as any).metadata = {};
+        }
+        if (!(result as any).metadata.approvals) {
+          (result as any).metadata.approvals = {};
+        }
+        (result as any).metadata.approvals.signatureFields = signatureFields;
       }
 
       res.json(result);
