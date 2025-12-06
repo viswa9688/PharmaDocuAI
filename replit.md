@@ -27,7 +27,15 @@ The system is built on a React, Express, PostgreSQL, and TypeScript stack.
     - **Google Document AI Form Parser**: Provides comprehensive OCR and document structure recognition.
     - **High-Accuracy Extraction Module**: Extracts tables, form fields, checkboxes, handwritten text, and signatures with precise positional data.
     - **Layout Analyzer**: Identifies page structures, groups elements spatially, and maps them to predefined fields, recognizing section types like `materials_log`, `equipment_log`, etc.
-    - **Signature Analyzer**: Detects signatures, tracks approval chains against a canonical checkpoint template, validates compliance, and links signatures to dates and checkboxes. It supports table-based signature detection and handles various signature roles.
+    - **Signature Analyzer**: Simplified presence/absence signature detection system that checks if signature fields contain any handwritten content. Key features:
+      - **Table-based Detection**: Identifies signature columns by matching headers (Recorded By, Verified By, Sign & Date, IPQA S/D, etc.) and checks if cells have content
+      - **On-the-fly Analysis**: Runs signature analysis during validation API calls using latest detection logic
+      - **Abbreviation Table Exclusion**: Intelligently excludes abbreviation/glossary tables from signature detection by:
+        - Detecting abbreviation-related keywords (abbreviation, definition, meaning)
+        - Identifying merged abbreviation-definition patterns (e.g., "Ckd. By Checked By")
+        - Checking table content structure (short abbreviation + long definition pattern)
+        - Recognizing known abbreviation-definition pairs
+      - **Output**: Returns signatureFields array with isSigned boolean for each field - only empty fields generate "Missing Signature" alerts
     - **Validation Engine**: A comprehensive system for pharmaceutical batch record compliance, including value extraction, formula detection with a library of calculations, SOP rules engine (JSON-configurable for thresholds, hold times, pH ranges), cross-page validation for consistency, and human-readable alerts.
     - **OpenAI-powered Classification**: Used for page classification, with a rule-based fallback mechanism.
     - **PDF Processing**: Extracts pages and generates high-resolution PNG images (scale: 2) for viewing.

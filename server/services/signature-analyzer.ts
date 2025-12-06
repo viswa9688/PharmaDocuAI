@@ -231,10 +231,131 @@ export class SignatureAnalyzer {
   }
 
   /**
+   * Check if a table is an abbreviation/glossary table (not signature-related).
+   * These tables define abbreviations like "Ckd. By = Checked By".
+   */
+  private isAbbreviationTable(table: TableData): boolean {
+    const allCellTexts = table.cells.map(c => (c.text || '').trim().toLowerCase()).join(' ');
+    
+    // Check if any cell mentions "abbreviation", "list of abbreviations", etc.
+    const abbreviationPatterns = [
+      /abbreviation/i,
+      /definition/i,
+      /meaning/i,
+      /stands?\s*for/i,
+      /full\s*form/i,
+      /list\s+of/i,
+    ];
+    
+    for (const pattern of abbreviationPatterns) {
+      if (pattern.test(allCellTexts)) {
+        return true;
+      }
+    }
+    
+    // Check for cells that contain known abbreviation-definition patterns
+    // e.g., "Ckd. By Checked By" or "BMR Batch Manufacturing Record"
+    const abbreviationDefinitionPatterns = [
+      /ckd\.?\s*by\s+checked\s*by/i,
+      /rec\.?\s*by\s+recorded\s*by/i,
+      /ver\.?\s*by\s+verified\s*by/i,
+      /s\/?d\s+sign\s*(&|and)?\s*date/i,
+      /bmr\s+batch\s*manufacturing\s*record/i,
+      /api\s+active\s*pharmaceutical\s*ingredient/i,
+      /sop\s+standard\s*operating\s*procedure/i,
+      /qa\s+quality\s*assurance/i,
+      /qc\s+quality\s*control/i,
+      /ipqa\s+in.?process\s*quality/i,
+      /gmp\s+good\s*manufacturing\s*practice/i,
+      /wfi\s+water\s*for\s*injection/i,
+    ];
+    
+    for (const pattern of abbreviationDefinitionPatterns) {
+      if (pattern.test(allCellTexts)) {
+        console.log('[SignatureAnalyzer] Detected abbreviation definition pattern in table');
+        return true;
+      }
+    }
+    
+    // Check table content structure: abbreviation tables typically have
+    // short text in col 0 (abbrev) and longer text in col 1 (definition)
+    const contentCells = table.cells.filter(cell => !cell.isHeader);
+    const col0Cells = contentCells.filter(c => c.colIndex === 0);
+    const col1Cells = contentCells.filter(c => c.colIndex === 1);
+    
+    // If most col0 cells are short (<=10 chars) and col1 cells are longer, it's likely an abbreviation table
+    if (col0Cells.length >= 5 && col1Cells.length >= 5) {
+      const shortCol0Count = col0Cells.filter(c => (c.text || '').trim().length <= 10).length;
+      const longCol1Count = col1Cells.filter(c => (c.text || '').trim().length > 10).length;
+      
+      if (shortCol0Count / col0Cells.length >= 0.7 && longCol1Count / col1Cells.length >= 0.5) {
+        console.log('[SignatureAnalyzer] Detected abbreviation table by content structure');
+        return true;
+      }
+    }
+    
+    // Check if the table has rows matching "X | Y meaning" pattern
+    const abbreviationDefinitionPairs = [
+      { abbrev: /^ckd\.?\s*by$/i, definition: /checked\s*by/i },
+      { abbrev: /^ver\.?\s*by$/i, definition: /verified\s*by/i },
+      { abbrev: /^rec\.?\s*by$/i, definition: /recorded\s*by/i },
+      { abbrev: /^s\/?d$/i, definition: /sign\s*(&|and)?\s*date/i },
+    ];
+    
+    let matchingPairs = 0;
+    for (const row of this.getTableRows(table)) {
+      const col0Text = (row[0]?.text || '').trim();
+      const col1Text = (row[1]?.text || '').trim();
+      
+      for (const pair of abbreviationDefinitionPairs) {
+        if (pair.abbrev.test(col0Text) && pair.definition.test(col1Text)) {
+          matchingPairs++;
+          break;
+        }
+      }
+    }
+    
+    if (matchingPairs >= 2) {
+      console.log('[SignatureAnalyzer] Detected abbreviation table by definition pairs');
+      return true;
+    }
+    
+    return false;
+  }
+  
+  /**
+   * Get rows from a table as arrays of cells.
+   */
+  private getTableRows(table: TableData): TableCell[][] {
+    const rows: Record<number, TableCell[]> = {};
+    
+    for (const cell of table.cells) {
+      if (!rows[cell.rowIndex]) {
+        rows[cell.rowIndex] = [];
+      }
+      rows[cell.rowIndex].push(cell);
+    }
+    
+    // Sort cells in each row by column index
+    const rowIndices = Object.keys(rows).map(Number);
+    for (const rowIndex of rowIndices) {
+      rows[rowIndex].sort((a: TableCell, b: TableCell) => a.colIndex - b.colIndex);
+    }
+    
+    return Object.values(rows);
+  }
+
+  /**
    * Detect signature fields from table columns.
    */
   private detectTableSignatureFields(table: TableData): SignatureField[] {
     const fields: SignatureField[] = [];
+
+    // Skip abbreviation/glossary tables - they don't require signatures
+    if (this.isAbbreviationTable(table)) {
+      console.log('[SignatureAnalyzer] Skipping abbreviation table');
+      return fields;
+    }
 
     // Find columns that are signature columns
     const signatureColumns = this.findSignatureColumns(table);
@@ -269,6 +390,26 @@ export class SignatureAnalyzer {
   }
 
   /**
+   * Check if text is an abbreviation-definition pattern (e.g., "Ckd. By Checked By")
+   */
+  private isAbbreviationDefinitionText(text: string): boolean {
+    const abbrevDefPatterns = [
+      /ckd\.?\s*by\s+checked\s*by/i,
+      /rec\.?\s*by\s+recorded\s*by/i,
+      /ver\.?\s*by\s+verified\s*by/i,
+      /s\/?d\s+sign\s*(&|and)?\s*date/i,
+      /^[a-z]{2,5}\.?\s+[a-z]{3,}/i, // Short abbrev + longer definition pattern
+    ];
+    
+    for (const pattern of abbrevDefPatterns) {
+      if (pattern.test(text)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Find signature columns by checking header cells.
    */
   private findSignatureColumns(table: TableData): Array<{ columnIndex: number; headerText: string }> {
@@ -278,6 +419,12 @@ export class SignatureAnalyzer {
 
     for (const headerCell of headerCells) {
       const headerText = (headerCell.text || '').trim();
+      
+      // Skip if header is actually an abbreviation-definition (e.g., "Ckd. By Checked By")
+      if (this.isAbbreviationDefinitionText(headerText)) {
+        console.log(`[SignatureAnalyzer] Skipping abbreviation-definition header: "${headerText}"`);
+        continue;
+      }
 
       for (const pattern of this.signatureFieldPatterns) {
         if (pattern.test(headerText)) {
@@ -354,6 +501,12 @@ export class SignatureAnalyzer {
 
     // Check for labels that match signature field patterns
     for (const element of textElements) {
+      // Skip abbreviation-definition text (e.g., "Ckd. By Checked By")
+      if (this.isAbbreviationDefinitionText(element.text)) {
+        console.log(`[SignatureAnalyzer] Skipping abbreviation-definition text block: "${element.text.substring(0, 50)}..."`);
+        continue;
+      }
+      
       for (const pattern of standalonePatterns) {
         if (pattern.test(element.text)) {
           const labelKey = element.text.trim().toLowerCase();

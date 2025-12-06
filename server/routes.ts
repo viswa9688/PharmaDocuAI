@@ -263,23 +263,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
             result.alerts.push(...visualAlerts);
           }
           
-          // Run signature analysis on-the-fly (works for both new and old documents)
-          let signatureFields = metadata.approvals?.signatureFields;
+          // Run signature analysis on-the-fly with latest detection logic
+          // Always re-run to use updated abbreviation table detection
+          let signatureFields: any[] | null = null;
           
-          // If signatureFields not present, run analyzer now using stored extraction data
-          if (!signatureFields && metadata.extraction) {
+          if (metadata.extraction) {
             try {
               const approvalAnalysis = signatureAnalyzer.analyze({
                 tables: metadata.extraction.tables,
                 handwrittenRegions: metadata.extraction.handwrittenRegions,
                 signatures: metadata.extraction.signatures,
                 formFields: metadata.extraction.formFields,
-                textBlocks: metadata.layoutAnalysis?.textBlocks,
+                textBlocks: metadata.extraction.textBlocks || metadata.layoutAnalysis?.textBlocks,
               });
               signatureFields = approvalAnalysis.signatureFields;
             } catch (err) {
               console.error(`Signature analysis failed for page ${page.pageNumber}:`, err);
+              // Fall back to stored signatureFields if analysis fails
+              signatureFields = metadata.approvals?.signatureFields || null;
             }
+          } else {
+            // Use stored signatureFields if no extraction data available
+            signatureFields = metadata.approvals?.signatureFields || null;
           }
           
           // Add signature alerts for missing signatures
@@ -313,7 +318,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
             
             // Attach signatureFields to result metadata for UI consumption
-            if (!result.metadata) {
+            if (!(result as any).metadata) {
               (result as any).metadata = {};
             }
             if (!(result as any).metadata.approvals) {
@@ -398,23 +403,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         result.alerts.push(...visualAlerts);
       }
       
-      // Run signature analysis on-the-fly (works for both new and old documents)
-      let signatureFields = metadata.approvals?.signatureFields;
+      // Run signature analysis on-the-fly with latest detection logic
+      // Always re-run to use updated abbreviation table detection
+      let signatureFields: any[] | null = null;
       
-      // If signatureFields not present, run analyzer now using stored extraction data
-      if (!signatureFields && metadata.extraction) {
+      if (metadata.extraction) {
         try {
           const approvalAnalysis = signatureAnalyzer.analyze({
             tables: metadata.extraction.tables,
             handwrittenRegions: metadata.extraction.handwrittenRegions,
             signatures: metadata.extraction.signatures,
             formFields: metadata.extraction.formFields,
-            textBlocks: metadata.layoutAnalysis?.textBlocks,
+            textBlocks: metadata.extraction.textBlocks || metadata.layoutAnalysis?.textBlocks,
           });
           signatureFields = approvalAnalysis.signatureFields;
         } catch (err) {
           console.error(`Signature analysis failed for page ${page.pageNumber}:`, err);
+          // Fall back to stored signatureFields if analysis fails
+          signatureFields = metadata.approvals?.signatureFields || null;
         }
+      } else {
+        // Use stored signatureFields if no extraction data available
+        signatureFields = metadata.approvals?.signatureFields || null;
       }
       
       // Add signature alerts for missing signatures
@@ -448,7 +458,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         
         // Attach signatureFields to result metadata for UI consumption
-        if (!result.metadata) {
+        if (!(result as any).metadata) {
           (result as any).metadata = {};
         }
         if (!(result as any).metadata.approvals) {
