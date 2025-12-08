@@ -18,6 +18,16 @@ type DocumentValidationSummary = {
   categories: ValidationCategories;
 };
 
+// Map category keys from ValidationSummary to ValidationAlerts tab values
+const categoryToTabMap: Record<string, string> = {
+  signatures: "all",
+  dataIntegrity: "integrity",
+  calculations: "calculations",
+  dates: "all", // sequence_error category doesn't have dedicated tab
+  batchNumbers: "missing", // batch issues are typically missing_value alerts
+  pageCompleteness: "missing", // page completeness issues appear as missing_value
+};
+
 export default function DocumentViewer() {
   const params = useParams();
   const [, setLocation] = useLocation();
@@ -25,6 +35,7 @@ export default function DocumentViewer() {
   const [selectedPage, setSelectedPage] = useState<Page | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailsExpanded, setDetailsExpanded] = useState(false);
+  const [activeValidationTab, setActiveValidationTab] = useState("all");
   
   const validationAlertsRef = useRef<HTMLDivElement>(null);
   const pageGridRef = useRef<HTMLDivElement>(null);
@@ -64,6 +75,9 @@ export default function DocumentViewer() {
   };
 
   const handleCategoryClick = (category: string) => {
+    // Map the category to the corresponding tab
+    const targetTab = categoryToTabMap[category] || "all";
+    setActiveValidationTab(targetTab);
     setDetailsExpanded(true);
     setTimeout(() => {
       if (validationAlertsRef.current) {
@@ -158,6 +172,8 @@ export default function DocumentViewer() {
               <div ref={validationAlertsRef}>
                 <ValidationAlerts 
                   documentId={documentId}
+                  activeTab={activeValidationTab}
+                  onTabChange={setActiveValidationTab}
                   onPageClick={(pageNumber) => {
                     const page = pages.find(p => p.pageNumber === pageNumber);
                     if (page) {

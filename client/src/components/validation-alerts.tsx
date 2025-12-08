@@ -34,6 +34,8 @@ import type {
 interface ValidationAlertsProps {
   documentId: string;
   onPageClick?: (pageNumber: number) => void;
+  activeTab?: string;
+  onTabChange?: (tab: string) => void;
 }
 
 const severityConfig: Record<AlertSeverity, { color: string; icon: typeof AlertCircle; label: string }> = {
@@ -104,7 +106,7 @@ function MissingPagesBanner({ alert }: { alert: ValidationAlert }) {
   );
 }
 
-export function ValidationAlerts({ documentId, onPageClick }: ValidationAlertsProps) {
+export function ValidationAlerts({ documentId, onPageClick, activeTab = "all", onTabChange }: ValidationAlertsProps) {
   const { data, isLoading, error } = useQuery<{
     summary: DocumentValidationSummary;
     pageResults: PageValidationResult[];
@@ -214,7 +216,7 @@ export function ValidationAlerts({ documentId, onPageClick }: ValidationAlertsPr
             </p>
           </div>
         ) : (
-          <Tabs defaultValue="all" className="w-full">
+          <Tabs value={activeTab} onValueChange={onTabChange} className="w-full">
             <TabsList className="grid w-full grid-cols-5">
               <TabsTrigger value="all" data-testid="tab-all-alerts">
                 All ({summary.totalAlerts})
