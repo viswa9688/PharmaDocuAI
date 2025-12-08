@@ -101,6 +101,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         let docHasIssues = false;
         
+        // Track checks per page for proper pass/fail counting
+        let pageDataIntegrityChecks = 0;
+        let pageDateChecks = 0;
+        let pageBatchChecks = 0;
+        
         // Run validation on all pages
         for (const page of pages) {
           const result = await validationEngine.validatePage(
@@ -112,10 +117,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           const metadata = page.metadata as Record<string, any> || {};
           
+          // Count data integrity checks (1 per page - was page scanned cleanly?)
+          pageDataIntegrityChecks++;
+          
+          // Count date checks if page has extracted dates
+          if (result.extractedValues?.some((v: any) => v.valueType === 'date' || v.valueType === 'datetime')) {
+            pageDateChecks++;
+          }
+          
+          // Count batch number checks if page has batch field
+          if (metadata.extraction?.formFields?.some((f: any) => 
+            /batch|lot/i.test(f.fieldName || '') || /batch|lot/i.test(f.fieldValue || '')
+          )) {
+            pageBatchChecks++;
+          }
+          
           // Add visual anomaly alerts
+          let hasDataIntegrityIssue = false;
           if (metadata.visualAnomalies && Array.isArray(metadata.visualAnomalies) && metadata.visualAnomalies.length > 0) {
             const visualAlerts = validationEngine.createVisualAnomalyAlerts(metadata.visualAnomalies);
             result.alerts.push(...visualAlerts);
+            hasDataIntegrityIssue = visualAlerts.length > 0;
           }
           
           // Run signature analysis
@@ -143,31 +165,64 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
           }
           
-          // Categorize alerts
+          // Categorize alerts and track failures
+          let hasDateIssue = false;
+          let hasBatchIssue = false;
+          let hasCalculationIssue = false;
+          
           for (const alert of result.alerts) {
             totalAlerts++;
             docHasIssues = true;
             
             if (alert.category === "data_integrity") {
               categories.dataIntegrity.failed++;
-              categories.dataIntegrity.total++;
+              hasDataIntegrityIssue = true;
             } else if (alert.category === "calculation_error") {
               categories.calculations.failed++;
               categories.calculations.total++;
+              hasCalculationIssue = true;
             } else if (alert.category === "sequence_error") {
               categories.dates.failed++;
-              categories.dates.total++;
+              hasDateIssue = true;
             } else if (alert.category === "missing_value" && 
                        (alert.title?.toLowerCase().includes("batch") || 
                         alert.title?.toLowerCase().includes("lot"))) {
               categories.batchNumbers.failed++;
-              categories.batchNumbers.total++;
+              hasBatchIssue = true;
             } else if (alert.category === "consistency_error" || 
                        (alert.category === "missing_value" && alert.title?.includes("Page"))) {
               categories.pageCompleteness.failed++;
               categories.pageCompleteness.total++;
             }
           }
+          
+          // If no data integrity issue on this page, it passed
+          if (!hasDataIntegrityIssue) {
+            categories.dataIntegrity.passed++;
+          }
+          categories.dataIntegrity.total++;
+          
+          // If page had date checks and no date issues, it passed
+          if (pageDateChecks > 0) {
+            categories.dates.total++;
+            if (!hasDateIssue) {
+              categories.dates.passed++;
+            }
+          }
+          
+          // If page had batch checks and no batch issues, it passed
+          if (pageBatchChecks > 0) {
+            categories.batchNumbers.total++;
+            if (!hasBatchIssue) {
+              categories.batchNumbers.passed++;
+            }
+          }
+        }
+        
+        // Page completeness: count document as 1 check
+        categories.pageCompleteness.total++;
+        if (categories.pageCompleteness.failed === 0) {
+          categories.pageCompleteness.passed++;
         }
         
         if (docHasIssues) documentsWithIssues++;

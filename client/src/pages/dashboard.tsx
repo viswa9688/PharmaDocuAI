@@ -302,7 +302,7 @@ export default function Dashboard() {
             <FileText className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
             <h3 className="font-semibold mb-2">No Documents Yet</h3>
             <p className="text-muted-foreground mb-4">Upload your first batch record to get started</p>
-            <Link href="/">
+            <Link href="/upload">
               <Badge variant="outline" className="cursor-pointer hover-elevate" data-testid="link-upload-first">
                 Upload Document <ArrowRight className="w-3 h-3 ml-1" />
               </Badge>
