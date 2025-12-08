@@ -1,14 +1,22 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useParams, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DocumentStats } from "@/components/document-stats";
 import { PageGrid } from "@/components/page-grid";
 import { PageDetailPanel } from "@/components/page-detail-panel";
 import { QualityAlert } from "@/components/quality-alert";
 import { ValidationAlerts } from "@/components/validation-alerts";
-import { ArrowLeft, Download } from "lucide-react";
+import { ValidationSummary, ValidationSummaryLoading, ValidationOverview, ValidationCategories } from "@/components/validation-summary";
+import { ArrowLeft, Download, ChevronDown, ChevronUp } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import type { Document, Page, QualityIssue, DocumentSummary } from "@shared/schema";
+
+type DocumentValidationSummary = {
+  overview: ValidationOverview;
+  categories: ValidationCategories;
+};
 
 export default function DocumentViewer() {
   const params = useParams();
@@ -16,9 +24,17 @@ export default function DocumentViewer() {
   const documentId = params.id as string;
   const [selectedPage, setSelectedPage] = useState<Page | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
+  
+  const validationAlertsRef = useRef<HTMLDivElement>(null);
+  const pageGridRef = useRef<HTMLDivElement>(null);
 
   const { data: summary, isLoading } = useQuery<DocumentSummary>({
     queryKey: ["/api/documents", documentId, "summary"],
+  });
+
+  const { data: validationSummary, isLoading: validationLoading } = useQuery<DocumentValidationSummary>({
+    queryKey: ["/api/documents", documentId, "validation-summary"],
   });
 
   const { data: pages = [] } = useQuery<Page[]>({
@@ -47,6 +63,15 @@ export default function DocumentViewer() {
     document.body.removeChild(a);
   };
 
+  const handleCategoryClick = (category: string) => {
+    setDetailsExpanded(true);
+    setTimeout(() => {
+      if (validationAlertsRef.current) {
+        validationAlertsRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }, 100);
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -65,7 +90,7 @@ export default function DocumentViewer() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-4">
           <Button
             variant="ghost"
@@ -90,48 +115,86 @@ export default function DocumentViewer() {
         </Button>
       </div>
 
-      <DocumentStats
-        totalPages={summary.pageCount}
-        classifiedPages={pages.length}
-        issueCount={summary.issueCount}
-        avgConfidence={summary.avgConfidence}
-      />
-
-      {/* Validation Alerts Section */}
-      <ValidationAlerts 
-        documentId={documentId}
-        onPageClick={(pageNumber) => {
-          const page = pages.find(p => p.pageNumber === pageNumber);
-          if (page) {
-            handlePageClick(page);
-          }
-        }}
-      />
-
-      {issues.length > 0 && (
-        <div className="space-y-4">
-          <h2 className="text-lg font-medium">Quality Control Issues</h2>
-          <div className="space-y-3">
-            {issues.map((issue) => (
-              <QualityAlert
-                key={issue.id}
-                type={issue.issueType as any}
-                description={issue.description}
-                pageNumbers={issue.pageNumbers as number[]}
-              />
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div>
-        <h2 className="text-lg font-medium mb-4">Page Classifications</h2>
-        <PageGrid
-          pages={pages}
-          onPageClick={handlePageClick}
-          selectedPageId={selectedPage?.id}
+      {/* Validation Summary Dashboard */}
+      {validationLoading ? (
+        <ValidationSummaryLoading />
+      ) : validationSummary ? (
+        <ValidationSummary
+          overview={validationSummary.overview}
+          categories={validationSummary.categories}
+          title="Document Validation"
+          subtitle={`${validationSummary.overview.totalPages} pages validated`}
+          onCategoryClick={handleCategoryClick}
+          compact
         />
-      </div>
+      ) : null}
+
+      {/* Collapsible Detailed View */}
+      <Collapsible open={detailsExpanded} onOpenChange={setDetailsExpanded}>
+        <Card>
+          <CollapsibleTrigger asChild>
+            <CardHeader className="cursor-pointer hover-elevate">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg">Detailed Validation Results</CardTitle>
+                {detailsExpanded ? (
+                  <ChevronUp className="h-5 w-5 text-muted-foreground" />
+                ) : (
+                  <ChevronDown className="h-5 w-5 text-muted-foreground" />
+                )}
+              </div>
+            </CardHeader>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <CardContent className="space-y-6 pt-0">
+              {/* Document Statistics */}
+              <DocumentStats
+                totalPages={summary.pageCount}
+                classifiedPages={pages.length}
+                issueCount={summary.issueCount}
+                avgConfidence={summary.avgConfidence}
+              />
+
+              {/* Validation Alerts Section */}
+              <div ref={validationAlertsRef}>
+                <ValidationAlerts 
+                  documentId={documentId}
+                  onPageClick={(pageNumber) => {
+                    const page = pages.find(p => p.pageNumber === pageNumber);
+                    if (page) {
+                      handlePageClick(page);
+                    }
+                  }}
+                />
+              </div>
+
+              {issues.length > 0 && (
+                <div className="space-y-4">
+                  <h3 className="text-lg font-medium">Quality Control Issues</h3>
+                  <div className="space-y-3">
+                    {issues.map((issue) => (
+                      <QualityAlert
+                        key={issue.id}
+                        type={issue.issueType as any}
+                        description={issue.description}
+                        pageNumbers={issue.pageNumbers as number[]}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div ref={pageGridRef}>
+                <h3 className="text-lg font-medium mb-4">Page Classifications</h3>
+                <PageGrid
+                  pages={pages}
+                  onPageClick={handlePageClick}
+                  selectedPageId={selectedPage?.id}
+                />
+              </div>
+            </CardContent>
+          </CollapsibleContent>
+        </Card>
+      </Collapsible>
 
       <PageDetailPanel
         page={selectedPage}

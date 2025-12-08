@@ -100,6 +100,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalPages += pages.length;
         
         let docHasIssues = false;
+        let docHasPageCompletenessIssue = false;
         
         // Track checks per page for proper pass/fail counting
         let pageDataIntegrityChecks = 0;
@@ -169,59 +170,69 @@ export async function registerRoutes(app: Express): Promise<Server> {
           let hasDateIssue = false;
           let hasBatchIssue = false;
           let hasCalculationIssue = false;
+          let hasPageCompletenessIssue = false;
           
           for (const alert of result.alerts) {
             totalAlerts++;
             docHasIssues = true;
             
             if (alert.category === "data_integrity") {
-              categories.dataIntegrity.failed++;
               hasDataIntegrityIssue = true;
             } else if (alert.category === "calculation_error") {
               categories.calculations.failed++;
               categories.calculations.total++;
               hasCalculationIssue = true;
             } else if (alert.category === "sequence_error") {
-              categories.dates.failed++;
               hasDateIssue = true;
             } else if (alert.category === "missing_value" && 
                        (alert.title?.toLowerCase().includes("batch") || 
                         alert.title?.toLowerCase().includes("lot"))) {
-              categories.batchNumbers.failed++;
               hasBatchIssue = true;
             } else if (alert.category === "consistency_error" || 
                        (alert.category === "missing_value" && alert.title?.includes("Page"))) {
-              categories.pageCompleteness.failed++;
-              categories.pageCompleteness.total++;
+              hasPageCompletenessIssue = true;
             }
           }
           
-          // If no data integrity issue on this page, it passed
-          if (!hasDataIntegrityIssue) {
+          // Data integrity: every page is checked, count once per page
+          categories.dataIntegrity.total++;
+          if (hasDataIntegrityIssue) {
+            categories.dataIntegrity.failed++;
+          } else {
             categories.dataIntegrity.passed++;
           }
-          categories.dataIntegrity.total++;
           
-          // If page had date checks and no date issues, it passed
+          // Date checks: only count if page has dates to validate, count once per page
           if (pageDateChecks > 0) {
             categories.dates.total++;
-            if (!hasDateIssue) {
+            if (hasDateIssue) {
+              categories.dates.failed++;
+            } else {
               categories.dates.passed++;
             }
           }
           
-          // If page had batch checks and no batch issues, it passed
+          // Batch checks: only count if page has batch/lot fields, count once per page
           if (pageBatchChecks > 0) {
             categories.batchNumbers.total++;
-            if (!hasBatchIssue) {
+            if (hasBatchIssue) {
+              categories.batchNumbers.failed++;
+            } else {
               categories.batchNumbers.passed++;
             }
           }
+          
+          // Track page completeness issues for this document
+          if (hasPageCompletenessIssue) {
+            docHasPageCompletenessIssue = true;
+          }
         }
         
-        // Page completeness: count document as 1 check
+        // Page completeness: count document as 1 check (scoped to this document)
         categories.pageCompleteness.total++;
-        if (categories.pageCompleteness.failed === 0) {
+        if (docHasPageCompletenessIssue) {
+          categories.pageCompleteness.failed++;
+        } else {
           categories.pageCompleteness.passed++;
         }
         
@@ -283,6 +294,170 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(summary);
     } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get per-document validation summary (same format as global dashboard)
+  app.get("/api/documents/:id/validation-summary", async (req, res) => {
+    try {
+      const doc = await storage.getDocument(req.params.id);
+      if (!doc) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+      
+      const pages = await storage.getPagesByDocument(req.params.id);
+      
+      // Initialize category metrics
+      const categories = {
+        signatures: { passed: 0, failed: 0, total: 0 },
+        dataIntegrity: { passed: 0, failed: 0, total: 0 },
+        calculations: { passed: 0, failed: 0, total: 0 },
+        dates: { passed: 0, failed: 0, total: 0 },
+        batchNumbers: { passed: 0, failed: 0, total: 0 },
+        pageCompleteness: { passed: 0, failed: 0, total: 0 },
+      };
+      
+      let totalAlerts = 0;
+      let hasPageCompletenessIssue = false;
+      
+      // Process each page
+      for (const page of pages) {
+        const result = await validationEngine.validatePage(
+          page.pageNumber,
+          page.metadata || {},
+          page.classification,
+          page.extractedText || ""
+        );
+        
+        const metadata = page.metadata as Record<string, any> || {};
+        
+        // Each page is a data integrity check opportunity
+        let hasDataIntegrityIssue = false;
+        
+        // Add visual anomaly alerts
+        if (metadata.visualAnomalies && Array.isArray(metadata.visualAnomalies) && metadata.visualAnomalies.length > 0) {
+          const visualAlerts = validationEngine.createVisualAnomalyAlerts(metadata.visualAnomalies);
+          result.alerts.push(...visualAlerts);
+          if (visualAlerts.length > 0) {
+            hasDataIntegrityIssue = true;
+          }
+        }
+        
+        // Run signature analysis
+        if (metadata.extraction) {
+          try {
+            const approvalAnalysis = signatureAnalyzer.analyze({
+              tables: metadata.extraction.tables,
+              handwrittenRegions: metadata.extraction.handwrittenRegions,
+              signatures: metadata.extraction.signatures,
+              formFields: metadata.extraction.formFields,
+              textBlocks: metadata.extraction.textBlocks || metadata.layoutAnalysis?.textBlocks,
+            });
+            
+            const signatureFields = approvalAnalysis.signatureFields || [];
+            const missingSignatures = signatureFields.filter((f: any) => !f.isSigned);
+            const signedFields = signatureFields.filter((f: any) => f.isSigned);
+            
+            categories.signatures.total += signatureFields.length;
+            categories.signatures.passed += signedFields.length;
+            categories.signatures.failed += missingSignatures.length;
+          } catch (err) {
+            console.error(`Signature analysis failed for page ${page.pageNumber}:`, err);
+          }
+        }
+        
+        // Count date checks if page has extracted dates
+        const hasDateCheck = result.extractedValues?.some((v: any) => v.valueType === 'date' || v.valueType === 'datetime');
+        
+        // Count batch number checks if page has batch field
+        const hasBatchCheck = metadata.extraction?.formFields?.some((f: any) => 
+          /batch|lot/i.test(f.fieldName || '') || /batch|lot/i.test(f.fieldValue || '')
+        );
+        
+        // Categorize alerts and track failures
+        let hasDateIssue = false;
+        let hasBatchIssue = false;
+        
+        for (const alert of result.alerts) {
+          totalAlerts++;
+          
+          if (alert.category === "data_integrity") {
+            hasDataIntegrityIssue = true;
+          } else if (alert.category === "calculation_error") {
+            categories.calculations.failed++;
+            categories.calculations.total++;
+          } else if (alert.category === "sequence_error") {
+            hasDateIssue = true;
+          } else if (alert.category === "missing_value" && 
+                     (alert.title?.toLowerCase().includes("batch") || 
+                      alert.title?.toLowerCase().includes("lot"))) {
+            hasBatchIssue = true;
+          } else if (alert.category === "consistency_error" || 
+                     (alert.category === "missing_value" && alert.title?.includes("Page"))) {
+            hasPageCompletenessIssue = true;
+          }
+        }
+        
+        // Data integrity: every page is checked, pass if no issues (count once per page)
+        categories.dataIntegrity.total++;
+        if (hasDataIntegrityIssue) {
+          categories.dataIntegrity.failed++;
+        } else {
+          categories.dataIntegrity.passed++;
+        }
+        
+        // Date checks: only count if page has dates to validate, count once per page
+        if (hasDateCheck) {
+          categories.dates.total++;
+          if (hasDateIssue) {
+            categories.dates.failed++;
+          } else {
+            categories.dates.passed++;
+          }
+        }
+        
+        // Batch checks: only count if page has batch/lot fields, count once per page
+        if (hasBatchCheck) {
+          categories.batchNumbers.total++;
+          if (hasBatchIssue) {
+            categories.batchNumbers.failed++;
+          } else {
+            categories.batchNumbers.passed++;
+          }
+        }
+      }
+      
+      // Page completeness: count document as 1 check (scoped to this document)
+      categories.pageCompleteness.total = 1;
+      if (!hasPageCompletenessIssue) {
+        categories.pageCompleteness.passed = 1;
+        categories.pageCompleteness.failed = 0;
+      } else {
+        categories.pageCompleteness.passed = 0;
+        categories.pageCompleteness.failed = 1;
+      }
+      
+      // Calculate overall pass rate
+      const totalChecks = Object.values(categories).reduce((sum, cat) => sum + cat.total, 0);
+      const totalPassed = Object.values(categories).reduce((sum, cat) => sum + cat.passed, 0);
+      const passRate = totalChecks > 0 ? Math.round((totalPassed / totalChecks) * 100) : 100;
+      
+      // Determine overall status
+      const criticalIssues = categories.signatures.failed + categories.dataIntegrity.failed;
+      const overallStatus = criticalIssues === 0 ? "compliant" : criticalIssues < 5 ? "review_required" : "non_compliant";
+      
+      res.json({
+        overview: {
+          totalPages: pages.length,
+          totalAlerts,
+          passRate,
+          overallStatus,
+        },
+        categories,
+      });
+    } catch (error: any) {
+      console.error("Document validation summary error:", error);
       res.status(500).json({ error: error.message });
     }
   });
