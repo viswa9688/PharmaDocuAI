@@ -9,13 +9,18 @@ import {
   SidebarMenuItem,
   SidebarHeader,
 } from "@/components/ui/sidebar";
-import { Upload, FileText, FolderOpen, Settings } from "lucide-react";
+import { Upload, FileText, FolderOpen, Settings, LayoutDashboard } from "lucide-react";
 import { Link, useLocation } from "wouter";
 
 const menuItems = [
   {
-    title: "Upload",
+    title: "Dashboard",
     url: "/",
+    icon: LayoutDashboard,
+  },
+  {
+    title: "Upload",
+    url: "/upload",
     icon: Upload,
   },
   {

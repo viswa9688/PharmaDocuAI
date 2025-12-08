@@ -74,6 +74,138 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Dashboard summary endpoint - aggregates validation metrics across documents
+  app.get("/api/dashboard/summary", async (_req, res) => {
+    try {
+      const documents = await storage.getAllDocuments();
+      const completedDocs = documents.filter(d => d.status === "completed");
+      
+      // Initialize category metrics
+      const categories = {
+        signatures: { passed: 0, failed: 0, total: 0 },
+        dataIntegrity: { passed: 0, failed: 0, total: 0 },
+        calculations: { passed: 0, failed: 0, total: 0 },
+        dates: { passed: 0, failed: 0, total: 0 },
+        batchNumbers: { passed: 0, failed: 0, total: 0 },
+        pageCompleteness: { passed: 0, failed: 0, total: 0 },
+      };
+      
+      let totalPages = 0;
+      let totalAlerts = 0;
+      let documentsWithIssues = 0;
+      
+      // Process each completed document
+      for (const doc of completedDocs) {
+        const pages = await storage.getPagesByDocument(doc.id);
+        totalPages += pages.length;
+        
+        let docHasIssues = false;
+        
+        // Run validation on all pages
+        for (const page of pages) {
+          const result = await validationEngine.validatePage(
+            page.pageNumber,
+            page.metadata || {},
+            page.classification,
+            page.extractedText || ""
+          );
+          
+          const metadata = page.metadata as Record<string, any> || {};
+          
+          // Add visual anomaly alerts
+          if (metadata.visualAnomalies && Array.isArray(metadata.visualAnomalies) && metadata.visualAnomalies.length > 0) {
+            const visualAlerts = validationEngine.createVisualAnomalyAlerts(metadata.visualAnomalies);
+            result.alerts.push(...visualAlerts);
+          }
+          
+          // Run signature analysis
+          if (metadata.extraction) {
+            try {
+              const approvalAnalysis = signatureAnalyzer.analyze({
+                tables: metadata.extraction.tables,
+                handwrittenRegions: metadata.extraction.handwrittenRegions,
+                signatures: metadata.extraction.signatures,
+                formFields: metadata.extraction.formFields,
+                textBlocks: metadata.extraction.textBlocks || metadata.layoutAnalysis?.textBlocks,
+              });
+              
+              const signatureFields = approvalAnalysis.signatureFields || [];
+              const missingSignatures = signatureFields.filter((f: any) => !f.isSigned);
+              const signedFields = signatureFields.filter((f: any) => f.isSigned);
+              
+              categories.signatures.total += signatureFields.length;
+              categories.signatures.passed += signedFields.length;
+              categories.signatures.failed += missingSignatures.length;
+              
+              if (missingSignatures.length > 0) docHasIssues = true;
+            } catch (err) {
+              console.error(`Signature analysis failed for page ${page.pageNumber}:`, err);
+            }
+          }
+          
+          // Categorize alerts
+          for (const alert of result.alerts) {
+            totalAlerts++;
+            docHasIssues = true;
+            
+            if (alert.category === "data_integrity") {
+              categories.dataIntegrity.failed++;
+              categories.dataIntegrity.total++;
+            } else if (alert.category === "calculation_error") {
+              categories.calculations.failed++;
+              categories.calculations.total++;
+            } else if (alert.category === "sequence_error") {
+              categories.dates.failed++;
+              categories.dates.total++;
+            } else if (alert.category === "missing_value" && 
+                       (alert.title?.toLowerCase().includes("batch") || 
+                        alert.title?.toLowerCase().includes("lot"))) {
+              categories.batchNumbers.failed++;
+              categories.batchNumbers.total++;
+            } else if (alert.category === "consistency_error" || 
+                       (alert.category === "missing_value" && alert.title?.includes("Page"))) {
+              categories.pageCompleteness.failed++;
+              categories.pageCompleteness.total++;
+            }
+          }
+        }
+        
+        if (docHasIssues) documentsWithIssues++;
+      }
+      
+      // Calculate overall pass rate
+      const totalChecks = Object.values(categories).reduce((sum, cat) => sum + cat.total, 0);
+      const totalPassed = Object.values(categories).reduce((sum, cat) => sum + cat.passed, 0);
+      const passRate = totalChecks > 0 ? Math.round((totalPassed / totalChecks) * 100) : 100;
+      
+      // Determine overall status
+      const criticalIssues = categories.signatures.failed + categories.dataIntegrity.failed;
+      const overallStatus = criticalIssues === 0 ? "compliant" : criticalIssues < 5 ? "review_required" : "non_compliant";
+      
+      res.json({
+        overview: {
+          totalDocuments: completedDocs.length,
+          documentsWithIssues,
+          totalPages,
+          totalAlerts,
+          passRate,
+          overallStatus,
+        },
+        categories,
+        recentDocuments: completedDocs.slice(0, 5).map(doc => ({
+          id: doc.id,
+          filename: doc.filename,
+          uploadedAt: doc.uploadedAt,
+          totalPages: doc.totalPages,
+          status: doc.status,
+        })),
+      });
+    } catch (error: any) {
+      console.error("Dashboard summary error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Get document by ID
   app.get("/api/documents/:id", async (req, res) => {
     try {

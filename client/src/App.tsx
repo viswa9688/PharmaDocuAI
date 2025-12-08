@@ -12,11 +12,13 @@ import Documents from "@/pages/documents";
 import DocumentViewer from "@/pages/document-viewer";
 import Processing from "@/pages/processing";
 import Settings from "@/pages/settings";
+import Dashboard from "@/pages/dashboard";
 
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={Upload} />
+      <Route path="/" component={Dashboard} />
+      <Route path="/upload" component={Upload} />
       <Route path="/documents" component={Documents} />
       <Route path="/documents/:id" component={DocumentViewer} />
       <Route path="/processing" component={Processing} />
