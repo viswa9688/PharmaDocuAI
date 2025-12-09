@@ -22,8 +22,12 @@ import type { IStorage } from "./storage";
 
 export class DBStorage implements IStorage {
   // Documents
-  async createDocument(insertDoc: InsertDocument): Promise<Document> {
-    const [doc] = await db.insert(documents).values(insertDoc).returning();
+  async createDocument(insertDoc: InsertDocument, uploadedBy?: string | null): Promise<Document> {
+    const docData = {
+      ...insertDoc,
+      uploadedBy: uploadedBy || null,
+    };
+    const [doc] = await db.insert(documents).values(docData).returning();
     return doc;
   }
 

@@ -1,15 +1,19 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FileText, Eye, Download, Trash2 } from "lucide-react";
+import { FileText, Eye, Download, Trash2, User } from "lucide-react";
 import type { Document } from "@shared/schema";
 import { formatDistance } from "date-fns";
 
+interface DocumentWithUploader extends Document {
+  uploaderName?: string | null;
+}
+
 interface DocumentListProps {
-  documents: Document[];
-  onView?: (doc: Document) => void;
-  onDownload?: (doc: Document) => void;
-  onDelete?: (doc: Document) => void;
+  documents: DocumentWithUploader[];
+  onView?: (doc: DocumentWithUploader) => void;
+  onDownload?: (doc: DocumentWithUploader) => void;
+  onDelete?: (doc: DocumentWithUploader) => void;
 }
 
 export function DocumentList({ documents, onView, onDownload, onDelete }: DocumentListProps) {
@@ -58,12 +62,18 @@ export function DocumentList({ documents, onView, onDownload, onDelete }: Docume
                   {doc.status}
                 </Badge>
               </div>
-              <div className="flex items-center gap-4 text-sm text-muted-foreground">
+              <div className="flex items-center gap-4 text-sm text-muted-foreground flex-wrap">
                 <span>{formatFileSize(doc.fileSize)}</span>
                 {doc.totalPages && <span>{doc.totalPages} pages</span>}
                 <span>
                   {formatDistance(new Date(doc.uploadedAt), new Date(), { addSuffix: true })}
                 </span>
+                {doc.uploaderName && (
+                  <span className="flex items-center gap-1" data-testid="text-uploader">
+                    <User className="h-3 w-3" />
+                    {doc.uploaderName}
+                  </span>
+                )}
               </div>
               {doc.status === "processing" && doc.totalPages && (
                 <div className="mt-2 text-sm">

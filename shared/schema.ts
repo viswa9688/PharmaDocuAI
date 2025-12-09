@@ -92,6 +92,7 @@ export const documents = pgTable("documents", {
   filename: text("filename").notNull(),
   fileSize: integer("file_size").notNull(),
   uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
+  uploadedBy: varchar("uploaded_by").references(() => users.id, { onDelete: "set null" }),
   status: text("status").notNull().default("pending"), // pending, processing, completed, failed
   totalPages: integer("total_pages"),
   processedPages: integer("processed_pages").default(0),
@@ -144,6 +145,7 @@ export const qualityIssues = pgTable("quality_issues", {
 export const insertDocumentSchema = createInsertSchema(documents).omit({
   id: true,
   uploadedAt: true,
+  uploadedBy: true,
   totalPages: true,
   processedPages: true,
   errorMessage: true,

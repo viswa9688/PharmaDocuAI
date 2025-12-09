@@ -11,7 +11,7 @@ import { randomUUID } from "crypto";
 
 export interface IStorage {
   // Documents
-  createDocument(doc: InsertDocument): Promise<Document>;
+  createDocument(doc: InsertDocument, uploadedBy?: string | null): Promise<Document>;
   getDocument(id: string): Promise<Document | undefined>;
   getAllDocuments(): Promise<Document[]>;
   updateDocument(id: string, updates: Partial<Document>): Promise<Document | undefined>;
@@ -42,16 +42,18 @@ export class MemStorage implements IStorage {
   }
 
   // Documents
-  async createDocument(insertDoc: InsertDocument): Promise<Document> {
+  async createDocument(insertDoc: InsertDocument, uploadedBy?: string | null): Promise<Document> {
     const id = randomUUID();
     const doc: Document = {
       ...insertDoc,
       id,
       uploadedAt: new Date(),
+      uploadedBy: uploadedBy || null,
       status: insertDoc.status || "pending",
       totalPages: null,
       processedPages: 0,
       errorMessage: null,
+      batchDateBounds: null,
     };
     this.documents.set(id, doc);
     return doc;

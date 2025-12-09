@@ -146,12 +146,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get user ID if authenticated
       const userId = req.user?.claims?.sub || null;
 
-      // Create document record
+      // Create document record with uploadedBy
       const doc = await storage.createDocument({
         filename: req.file.originalname,
         fileSize: req.file.size,
         status: "pending",
-      });
+      }, userId);
 
       // Log upload event
       await logEvent("document_upload", "success", {
@@ -185,11 +185,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get all documents
+  // Get all documents with uploader info
   app.get("/api/documents", async (_req, res) => {
     try {
       const documents = await storage.getAllDocuments();
-      res.json(documents);
+      
+      // Fetch uploader info for each document
+      const documentsWithUploader = await Promise.all(
+        documents.map(async (doc) => {
+          let uploaderName = null;
+          if (doc.uploadedBy) {
+            const user = await storage.getUser(doc.uploadedBy);
+            if (user) {
+              uploaderName = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email || 'Unknown';
+            }
+          }
+          return { ...doc, uploaderName };
+        })
+      );
+      
+      res.json(documentsWithUploader);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get user info by ID
+  app.get("/api/users/:id", async (req, res) => {
+    try {
+      const user = await storage.getUser(req.params.id);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.json({
+        id: user.id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        profileImageUrl: user.profileImageUrl,
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1148,7 +1182,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const batch = batches[batchIndex];
               console.log(`Processing batch ${batchIndex + 1}/${batches.length}: pages ${batch.startPage}-${batch.endPage}`);
 
+              // Log Document AI extraction start
+              await logEvent("document_ai_extraction", "pending", {
+                documentId,
+                userId,
+                metadata: { 
+                  batchIndex: batchIndex + 1, 
+                  totalBatches: batches.length,
+                  startPage: batch.startPage,
+                  endPage: batch.endPage,
+                },
+              });
+
               const batchDocument = await documentAI.processDocument(batch.buffer);
+              
+              // Log Document AI extraction success
+              await logEvent("document_ai_extraction", "success", {
+                documentId,
+                userId,
+                metadata: { 
+                  batchIndex: batchIndex + 1, 
+                  pagesExtracted: documentAI.getTotalPages(batchDocument),
+                },
+              });
               const batchPages = documentAI.getTotalPages(batchDocument);
 
               for (let i = 0; i < batchPages; i++) {
@@ -1268,8 +1324,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
           } else {
             // Process as single document
+            // Log Document AI extraction start
+            await logEvent("document_ai_extraction", "pending", {
+              documentId,
+              userId,
+              metadata: { totalPages: pageCount },
+            });
+
             const document = await documentAI.processDocument(pdfBuffer);
             const totalPages = documentAI.getTotalPages(document);
+
+            // Log Document AI extraction success
+            await logEvent("document_ai_extraction", "success", {
+              documentId,
+              userId,
+              metadata: { pagesExtracted: totalPages },
+            });
 
             for (let i = 0; i < totalPages; i++) {
               const pageNumber = i + 1;
@@ -1461,8 +1531,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // Log page classification summary
+      await logEvent("page_classification", "success", {
+        documentId,
+        userId,
+        metadata: {
+          totalPages: processedPages.length,
+          classifications: processedPages.reduce((acc, p) => {
+            acc[p.classification] = (acc[p.classification] || 0) + 1;
+            return acc;
+          }, {} as Record<string, number>),
+        },
+      });
+
       // Detect quality issues
       const qualityIssues = await classifier.detectQualityIssues(processedPages);
+
+      // Log validation stage
+      await logEvent("validation", "success", {
+        documentId,
+        userId,
+        metadata: {
+          qualityIssuesFound: qualityIssues.length,
+          issueSeverities: qualityIssues.reduce((acc, i) => {
+            acc[i.severity] = (acc[i.severity] || 0) + 1;
+            return acc;
+          }, {} as Record<string, number>),
+        },
+      });
 
       for (const issue of qualityIssues) {
         await storage.createQualityIssue({

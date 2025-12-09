@@ -9,6 +9,7 @@ import { PageDetailPanel } from "@/components/page-detail-panel";
 import { QualityAlert } from "@/components/quality-alert";
 import { ValidationAlerts } from "@/components/validation-alerts";
 import { ValidationSummary, ValidationSummaryLoading, ValidationOverview, ValidationCategories } from "@/components/validation-summary";
+import { AuditTimeline } from "@/components/audit-timeline";
 import { ArrowLeft, Download, ChevronDown, ChevronUp } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import type { Document, Page, QualityIssue, DocumentSummary } from "@shared/schema";
@@ -142,6 +143,9 @@ export default function DocumentViewer() {
           compact
         />
       ) : null}
+
+      {/* Audit Timeline */}
+      <AuditTimeline documentId={documentId} />
 
       {/* Collapsible Detailed View */}
       <Collapsible open={detailsExpanded} onOpenChange={setDetailsExpanded}>
