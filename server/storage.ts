@@ -5,6 +5,8 @@ import type {
   InsertPage,
   QualityIssue,
   InsertQualityIssue,
+  IssueResolution,
+  InsertIssueResolution,
   DocumentSummary 
 } from "@shared/schema";
 import { randomUUID } from "crypto";
@@ -25,6 +27,14 @@ export interface IStorage {
   // Quality Issues
   createQualityIssue(issue: InsertQualityIssue): Promise<QualityIssue>;
   getIssuesByDocument(documentId: string): Promise<QualityIssue[]>;
+  getQualityIssue(id: string): Promise<QualityIssue | undefined>;
+  updateQualityIssue(id: string, updates: Partial<QualityIssue>): Promise<QualityIssue | undefined>;
+
+  // Issue Resolutions
+  createIssueResolution(resolution: InsertIssueResolution): Promise<IssueResolution>;
+  getIssueResolutions(issueId: string): Promise<IssueResolution[]>;
+  getDocumentIssueResolutions(documentId: string): Promise<IssueResolution[]>;
+  getIssuesWithResolutions(documentId: string): Promise<{ issue: QualityIssue; resolutions: IssueResolution[] }[]>;
 
   // Summary
   getDocumentSummary(documentId: string): Promise<DocumentSummary | undefined>;
@@ -34,11 +44,13 @@ export class MemStorage implements IStorage {
   private documents: Map<string, Document>;
   private pages: Map<string, Page>;
   private qualityIssues: Map<string, QualityIssue>;
+  private issueResolutions: Map<string, IssueResolution>;
 
   constructor() {
     this.documents = new Map();
     this.pages = new Map();
     this.qualityIssues = new Map();
+    this.issueResolutions = new Map();
   }
 
   // Documents
@@ -132,6 +144,53 @@ export class MemStorage implements IStorage {
     return Array.from(this.qualityIssues.values())
       .filter(issue => issue.documentId === documentId)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  async getQualityIssue(id: string): Promise<QualityIssue | undefined> {
+    return this.qualityIssues.get(id);
+  }
+
+  async updateQualityIssue(id: string, updates: Partial<QualityIssue>): Promise<QualityIssue | undefined> {
+    const issue = this.qualityIssues.get(id);
+    if (!issue) return undefined;
+    const updated = { ...issue, ...updates };
+    this.qualityIssues.set(id, updated);
+    return updated;
+  }
+
+  // Issue Resolutions
+  async createIssueResolution(resolution: InsertIssueResolution): Promise<IssueResolution> {
+    const id = randomUUID();
+    const created: IssueResolution = {
+      ...resolution,
+      id,
+      previousStatus: resolution.previousStatus || null,
+      createdAt: new Date(),
+    };
+    this.issueResolutions.set(id, created);
+    return created;
+  }
+
+  async getIssueResolutions(issueId: string): Promise<IssueResolution[]> {
+    return Array.from(this.issueResolutions.values())
+      .filter(r => r.issueId === issueId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  async getDocumentIssueResolutions(documentId: string): Promise<IssueResolution[]> {
+    return Array.from(this.issueResolutions.values())
+      .filter(r => r.documentId === documentId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  async getIssuesWithResolutions(documentId: string): Promise<{ issue: QualityIssue; resolutions: IssueResolution[] }[]> {
+    const issues = await this.getIssuesByDocument(documentId);
+    const result = [];
+    for (const issue of issues) {
+      const resolutions = await this.getIssueResolutions(issue.id);
+      result.push({ issue, resolutions });
+    }
+    return result;
   }
 
   // Summary

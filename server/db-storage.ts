@@ -3,6 +3,7 @@ import {
   documents, 
   pages, 
   qualityIssues,
+  issueResolutions,
   users,
   processingEvents,
   type Document,
@@ -11,6 +12,8 @@ import {
   type InsertPage,
   type QualityIssue,
   type InsertQualityIssue,
+  type IssueResolution,
+  type InsertIssueResolution,
   type DocumentSummary,
   type User,
   type UpsertUser,
@@ -180,6 +183,52 @@ export class DBStorage implements IStorage {
       .from(processingEvents)
       .where(eq(processingEvents.status, "failed"))
       .orderBy(desc(processingEvents.createdAt));
+  }
+
+  // Issue Resolution operations
+  async getQualityIssue(id: string): Promise<QualityIssue | undefined> {
+    const [issue] = await db.select().from(qualityIssues).where(eq(qualityIssues.id, id));
+    return issue;
+  }
+
+  async updateQualityIssue(id: string, updates: Partial<QualityIssue>): Promise<QualityIssue | undefined> {
+    const [updated] = await db
+      .update(qualityIssues)
+      .set(updates)
+      .where(eq(qualityIssues.id, id))
+      .returning();
+    return updated;
+  }
+
+  async createIssueResolution(resolution: InsertIssueResolution): Promise<IssueResolution> {
+    const [created] = await db.insert(issueResolutions).values(resolution).returning();
+    return created;
+  }
+
+  async getIssueResolutions(issueId: string): Promise<IssueResolution[]> {
+    return db
+      .select()
+      .from(issueResolutions)
+      .where(eq(issueResolutions.issueId, issueId))
+      .orderBy(desc(issueResolutions.createdAt));
+  }
+
+  async getDocumentIssueResolutions(documentId: string): Promise<IssueResolution[]> {
+    return db
+      .select()
+      .from(issueResolutions)
+      .where(eq(issueResolutions.documentId, documentId))
+      .orderBy(desc(issueResolutions.createdAt));
+  }
+
+  async getIssuesWithResolutions(documentId: string): Promise<{ issue: QualityIssue; resolutions: IssueResolution[] }[]> {
+    const issues = await this.getIssuesByDocument(documentId);
+    const result = [];
+    for (const issue of issues) {
+      const resolutions = await this.getIssueResolutions(issue.id);
+      result.push({ issue, resolutions });
+    }
+    return result;
   }
 }
 

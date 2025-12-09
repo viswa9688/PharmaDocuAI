@@ -6,13 +6,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DocumentStats } from "@/components/document-stats";
 import { PageGrid } from "@/components/page-grid";
 import { PageDetailPanel } from "@/components/page-detail-panel";
-import { QualityAlert } from "@/components/quality-alert";
 import { ValidationAlerts } from "@/components/validation-alerts";
+import { IssueResolutionPanel } from "@/components/issue-resolution-panel";
 import { ValidationSummary, ValidationSummaryLoading, ValidationOverview, ValidationCategories } from "@/components/validation-summary";
 import { AuditTimeline } from "@/components/audit-timeline";
 import { ArrowLeft, Download, ChevronDown, ChevronUp } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import type { Document, Page, QualityIssue, DocumentSummary } from "@shared/schema";
+import type { Document, Page, DocumentSummary } from "@shared/schema";
 
 type DocumentValidationSummary = {
   overview: ValidationOverview;
@@ -51,10 +51,6 @@ export default function DocumentViewer() {
 
   const { data: pages = [] } = useQuery<Page[]>({
     queryKey: ["/api/documents", documentId, "pages"],
-  });
-
-  const { data: issues = [] } = useQuery<QualityIssue[]>({
-    queryKey: ["/api/documents", documentId, "issues"],
   });
 
   const handlePageClick = (page: Page) => {
@@ -147,6 +143,9 @@ export default function DocumentViewer() {
       {/* Audit Timeline */}
       <AuditTimeline documentId={documentId} />
 
+      {/* Issue Resolution Panel */}
+      <IssueResolutionPanel documentId={documentId} />
+
       {/* Collapsible Detailed View */}
       <Collapsible open={detailsExpanded} onOpenChange={setDetailsExpanded}>
         <Card>
@@ -186,22 +185,6 @@ export default function DocumentViewer() {
                   }}
                 />
               </div>
-
-              {issues.length > 0 && (
-                <div className="space-y-4">
-                  <h3 className="text-lg font-medium">Quality Control Issues</h3>
-                  <div className="space-y-3">
-                    {issues.map((issue) => (
-                      <QualityAlert
-                        key={issue.id}
-                        type={issue.issueType as any}
-                        description={issue.description}
-                        pageNumbers={issue.pageNumbers as number[]}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
 
               <div ref={pageGridRef}>
                 <h3 className="text-lg font-medium mb-4">Page Classifications</h3>

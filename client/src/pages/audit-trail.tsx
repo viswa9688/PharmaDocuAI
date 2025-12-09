@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -67,6 +68,8 @@ const eventTypeConfig: Record<string, { label: string; icon: any; color: string 
   alert_acknowledged: { label: "Alert Acknowledged", icon: AlertTriangle, color: "bg-orange-500" },
   document_approved: { label: "Document Approved", icon: ThumbsUp, color: "bg-green-600" },
   document_unapproved: { label: "Document Unapproved", icon: ThumbsDown, color: "bg-yellow-500" },
+  issue_approved: { label: "Issue Approved", icon: CheckCircle, color: "bg-teal-500" },
+  issue_rejected: { label: "Issue Rejected", icon: XCircle, color: "bg-rose-500" },
 };
 
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "destructive" }> = {
@@ -76,6 +79,7 @@ const statusConfig: Record<string, { label: string; variant: "default" | "second
 };
 
 export default function AuditTrail() {
+  const [, setLocation] = useLocation();
   const [searchQuery, setSearchQuery] = useState("");
   const [eventTypeFilter, setEventTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -241,20 +245,53 @@ export default function AuditTrail() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div className="text-sm">
+                          <div className="text-sm space-y-1">
                             {event.metadata?.filename && (
-                              <span className="font-medium">{event.metadata.filename}</span>
+                              <button
+                                className="font-medium text-left hover:underline text-primary"
+                                onClick={() => event.documentId && setLocation(`/documents/${event.documentId}`)}
+                                data-testid={`link-document-${event.id}`}
+                              >
+                                {event.metadata.filename}
+                              </button>
                             )}
                             {event.documentId && !event.metadata?.filename && (
-                              <span className="font-mono text-xs text-muted-foreground">
+                              <button
+                                className="font-mono text-xs text-muted-foreground hover:underline"
+                                onClick={() => setLocation(`/documents/${event.documentId}`)}
+                              >
                                 Doc: {event.documentId.slice(0, 8)}...
-                              </span>
+                              </button>
                             )}
                             {event.metadata?.deletedDocumentId && (
                               <span className="text-muted-foreground">
                                 {" "}
                                 (Deleted: {event.metadata.deletedDocumentId.slice(0, 8)}...)
                               </span>
+                            )}
+                            {(event.eventType === "issue_approved" || event.eventType === "issue_rejected") && event.metadata?.issueType && (
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <Badge variant="outline" className="text-xs">
+                                  {event.metadata.issueType}
+                                </Badge>
+                                {event.metadata?.severity && (
+                                  <Badge 
+                                    variant="outline" 
+                                    className={`text-xs ${
+                                      event.metadata.severity === "high" ? "border-red-500 text-red-500" :
+                                      event.metadata.severity === "medium" ? "border-yellow-500 text-yellow-500" :
+                                      "border-blue-500 text-blue-500"
+                                    }`}
+                                  >
+                                    {event.metadata.severity}
+                                  </Badge>
+                                )}
+                              </div>
+                            )}
+                            {event.metadata?.comment && (
+                              <p className="text-xs text-muted-foreground truncate max-w-[300px]">
+                                "{event.metadata.comment}"
+                              </p>
                             )}
                             {event.errorMessage && (
                               <span className="text-destructive block truncate max-w-[300px]">

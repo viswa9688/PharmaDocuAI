@@ -52,6 +52,8 @@ export const processingEventTypes = [
   "alert_acknowledged",
   "document_approved",
   "document_unapproved",
+  "issue_approved",
+  "issue_rejected",
 ] as const;
 
 export type ProcessingEventType = typeof processingEventTypes[number];
@@ -136,6 +138,10 @@ export const pages = pgTable("pages", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// Issue resolution status enum
+export const issueResolutionStatuses = ["pending", "approved", "rejected"] as const;
+export type IssueResolutionStatus = typeof issueResolutionStatuses[number];
+
 // Quality control issues
 export const qualityIssues = pgTable("quality_issues", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -145,6 +151,22 @@ export const qualityIssues = pgTable("quality_issues", {
   description: text("description").notNull(),
   pageNumbers: jsonb("page_numbers").$type<number[]>().default([]),
   resolved: boolean("resolved").default(false),
+  resolutionStatus: text("resolution_status").default("pending").notNull(), // pending, approved, rejected
+  resolvedBy: varchar("resolved_by").references(() => users.id, { onDelete: "set null" }),
+  resolvedAt: timestamp("resolved_at"),
+  resolutionComment: text("resolution_comment"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Issue resolutions history table - tracks all resolution actions with mandatory comments
+export const issueResolutions = pgTable("issue_resolutions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  issueId: varchar("issue_id").notNull().references(() => qualityIssues.id, { onDelete: "cascade" }),
+  documentId: varchar("document_id").notNull().references(() => documents.id, { onDelete: "cascade" }),
+  resolverId: varchar("resolver_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  status: text("status").notNull(), // approved, rejected
+  comment: text("comment").notNull(), // Mandatory comment for every resolution
+  previousStatus: text("previous_status"), // What status the issue was before this action
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -168,6 +190,11 @@ export const insertQualityIssueSchema = createInsertSchema(qualityIssues).omit({
   createdAt: true,
 });
 
+export const insertIssueResolutionSchema = createInsertSchema(issueResolutions).omit({
+  id: true,
+  createdAt: true,
+});
+
 // Types
 export type Document = typeof documents.$inferSelect;
 export type InsertDocument = z.infer<typeof insertDocumentSchema>;
@@ -175,6 +202,8 @@ export type Page = typeof pages.$inferSelect;
 export type InsertPage = z.infer<typeof insertPageSchema>;
 export type QualityIssue = typeof qualityIssues.$inferSelect;
 export type InsertQualityIssue = z.infer<typeof insertQualityIssueSchema>;
+export type IssueResolution = typeof issueResolutions.$inferSelect;
+export type InsertIssueResolution = z.infer<typeof insertIssueResolutionSchema>;
 
 // Processing job status type (for frontend state management)
 export type ProcessingStatus = {

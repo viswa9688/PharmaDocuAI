@@ -1265,6 +1265,140 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ==========================================
+  // ISSUE RESOLUTION ENDPOINTS
+  // ==========================================
+
+  // Get all issues for a document with resolution history and counts
+  app.get("/api/documents/:id/issues", async (req, res) => {
+    try {
+      const documentId = req.params.id;
+      
+      const doc = await storage.getDocument(documentId);
+      if (!doc) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+      
+      const issuesWithResolutions = await storage.getIssuesWithResolutions(documentId);
+      
+      // Calculate counts
+      const counts = {
+        total: issuesWithResolutions.length,
+        pending: 0,
+        approved: 0,
+        rejected: 0,
+      };
+      
+      issuesWithResolutions.forEach(({ issue }) => {
+        if (issue.resolutionStatus === "approved") counts.approved++;
+        else if (issue.resolutionStatus === "rejected") counts.rejected++;
+        else counts.pending++;
+      });
+      
+      res.json({
+        documentId,
+        filename: doc.filename,
+        issues: issuesWithResolutions,
+        counts,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Resolve an issue (approve or reject) with mandatory comment
+  app.post("/api/issues/:issueId/resolve", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ error: "User ID required" });
+      }
+      
+      const { issueId } = req.params;
+      const { status, comment } = req.body;
+      
+      // Validate required fields
+      if (!status || !["approved", "rejected"].includes(status)) {
+        return res.status(400).json({ error: "Status must be 'approved' or 'rejected'" });
+      }
+      
+      if (!comment || typeof comment !== "string" || comment.trim().length === 0) {
+        return res.status(400).json({ error: "Comment is required for issue resolution" });
+      }
+      
+      // Get the issue
+      const issue = await storage.getQualityIssue(issueId);
+      if (!issue) {
+        return res.status(404).json({ error: "Issue not found" });
+      }
+      
+      const previousStatus = issue.resolutionStatus;
+      
+      // Create resolution record
+      const resolution = await storage.createIssueResolution({
+        issueId,
+        documentId: issue.documentId,
+        resolverId: userId,
+        status,
+        comment: comment.trim(),
+        previousStatus,
+      });
+      
+      // Update the issue
+      const updatedIssue = await storage.updateQualityIssue(issueId, {
+        resolutionStatus: status,
+        resolvedBy: userId,
+        resolvedAt: new Date(),
+        resolutionComment: comment.trim(),
+        resolved: status === "approved",
+      });
+      
+      // Log audit event
+      await logEvent(status === "approved" ? "issue_approved" : "issue_rejected", "success", {
+        documentId: issue.documentId,
+        userId,
+        metadata: {
+          issueId,
+          issueType: issue.issueType,
+          severity: issue.severity,
+          description: issue.description,
+          pageNumbers: issue.pageNumbers,
+          previousStatus,
+          newStatus: status,
+          comment: comment.trim(),
+        },
+      });
+      
+      res.json({
+        issue: updatedIssue,
+        resolution,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get resolution history for a specific issue
+  app.get("/api/issues/:issueId/resolutions", async (req, res) => {
+    try {
+      const { issueId } = req.params;
+      
+      const issue = await storage.getQualityIssue(issueId);
+      if (!issue) {
+        return res.status(404).json({ error: "Issue not found" });
+      }
+      
+      const resolutions = await storage.getIssueResolutions(issueId);
+      
+      res.json({
+        issue,
+        resolutions,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Serve page images with placeholder fallback
   app.get("/api/documents/:docId/pages/:pageNumber/image", async (req, res) => {
     try {
