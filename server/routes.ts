@@ -10,9 +10,62 @@ import { LayoutAnalyzer } from "./services/layout-analyzer";
 import { SignatureAnalyzer } from "./services/signature-analyzer";
 import { ValidationEngine } from "./services/validation-engine";
 import { VisualAnalyzer } from "./services/visual-analyzer";
+import { setupAuth, isAuthenticated } from "./replitAuth";
+import type { ProcessingEventType } from "@shared/schema";
 
 // Use PostgreSQL database storage for persistence
 const storage = new DBStorage();
+
+// Generate placeholder SVG for missing page images
+function generatePlaceholderSVG(pageNumber: number, message: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="1100" viewBox="0 0 800 1100">
+  <rect width="100%" height="100%" fill="#f5f5f5"/>
+  <rect x="20" y="20" width="760" height="1060" fill="#ffffff" stroke="#e0e0e0" stroke-width="2" rx="8"/>
+  <g transform="translate(400, 450)">
+    <circle cx="0" cy="0" r="60" fill="none" stroke="#9e9e9e" stroke-width="3"/>
+    <path d="M-25,-15 L25,-15 L25,25 L-25,25 Z" fill="none" stroke="#9e9e9e" stroke-width="2"/>
+    <circle cx="0" cy="-5" r="8" fill="none" stroke="#9e9e9e" stroke-width="2"/>
+    <path d="M-20,15 Q0,-5 20,15" fill="none" stroke="#9e9e9e" stroke-width="2"/>
+  </g>
+  <text x="400" y="560" font-family="system-ui, sans-serif" font-size="18" fill="#666666" text-anchor="middle">
+    ${message}
+  </text>
+  <text x="400" y="600" font-family="system-ui, sans-serif" font-size="24" fill="#333333" text-anchor="middle" font-weight="600">
+    Page ${pageNumber}
+  </text>
+  <text x="400" y="640" font-family="system-ui, sans-serif" font-size="14" fill="#999999" text-anchor="middle">
+    PDF-to-image conversion may have failed
+  </text>
+</svg>`;
+}
+
+// Audit trail helper
+async function logEvent(
+  eventType: ProcessingEventType,
+  status: "pending" | "success" | "failed",
+  options: {
+    documentId?: string | null;
+    pageId?: string | null;
+    userId?: string | null;
+    errorMessage?: string | null;
+    metadata?: Record<string, any>;
+  } = {}
+) {
+  try {
+    await storage.createProcessingEvent({
+      eventType,
+      status,
+      documentId: options.documentId ?? null,
+      pageId: options.pageId ?? null,
+      userId: options.userId ?? null,
+      errorMessage: options.errorMessage ?? null,
+      metadata: options.metadata || {},
+    });
+  } catch (err) {
+    console.error("Failed to log processing event:", err);
+  }
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -22,6 +75,9 @@ const upload = multer({
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Setup authentication
+  await setupAuth(app);
+
   const documentAI = createDocumentAIService();
   const classifier = createClassifierService();
   const pdfProcessor = createPDFProcessorService();
@@ -30,8 +86,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const validationEngine = new ValidationEngine();
   const visualAnalyzer = new VisualAnalyzer('uploads/thumbnails');
 
-  // Upload and process document
-  app.post("/api/documents/upload", upload.single("file"), async (req, res) => {
+  // Auth routes - returns user if authenticated, null if not (does NOT require auth)
+  app.get('/api/auth/user', async (req: any, res) => {
+    try {
+      if (!req.isAuthenticated || !req.isAuthenticated() || !req.user?.claims?.sub) {
+        return res.json(null);
+      }
+      const userId = req.user.claims.sub;
+      const user = await storage.getUser(userId);
+      res.json(user || null);
+    } catch (error) {
+      console.error("Error fetching user:", error);
+      res.json(null);
+    }
+  });
+
+  // Get processing events for a document (audit trail)
+  app.get("/api/documents/:id/events", isAuthenticated, async (req, res) => {
+    try {
+      const events = await storage.getEventsByDocument(req.params.id);
+      res.json(events);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get all recent processing events
+  app.get("/api/events/recent", isAuthenticated, async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 100;
+      const events = await storage.getRecentEvents(limit);
+      res.json(events);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get failed processing events
+  app.get("/api/events/failed", isAuthenticated, async (req, res) => {
+    try {
+      const events = await storage.getFailedEvents();
+      res.json(events);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Upload and process document (requires authentication)
+  app.post("/api/documents/upload", isAuthenticated, upload.single("file"), async (req: any, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ error: "No file uploaded" });
@@ -41,6 +143,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Only PDF files are supported" });
       }
 
+      // Get user ID if authenticated
+      const userId = req.user?.claims?.sub || null;
+
       // Create document record
       const doc = await storage.createDocument({
         filename: req.file.originalname,
@@ -48,11 +153,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: "pending",
       });
 
+      // Log upload event
+      await logEvent("document_upload", "success", {
+        documentId: doc.id,
+        userId,
+        metadata: {
+          filename: req.file.originalname,
+          fileSize: req.file.size,
+        },
+      });
+
       // Start processing asynchronously
-      processDocument(doc.id, req.file.buffer).catch(error => {
+      processDocument(doc.id, req.file.buffer, userId).catch(error => {
         console.error("Error processing document:", error);
         storage.updateDocument(doc.id, {
           status: "failed",
+          errorMessage: error.message,
+        });
+        // Log processing failure
+        logEvent("processing_failed", "failed", {
+          documentId: doc.id,
+          userId,
           errorMessage: error.message,
         });
       });
@@ -862,8 +983,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Delete document
-  app.delete("/api/documents/:id", async (req, res) => {
+  // Delete document (requires authentication)
+  app.delete("/api/documents/:id", isAuthenticated, async (req, res) => {
     try {
       const deleted = await storage.deleteDocument(req.params.id);
       if (!deleted) {
@@ -875,10 +996,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Serve page images
+  // Serve page images with placeholder fallback
   app.get("/api/documents/:docId/pages/:pageNumber/image", async (req, res) => {
     try {
       const { docId, pageNumber } = req.params;
+      const fs = await import('fs');
       
       // Validate document exists
       const doc = await storage.getDocument(docId);
@@ -891,7 +1013,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const page = pages.find(p => p.pageNumber === parseInt(pageNumber));
       
       if (!page || !page.imagePath) {
-        return res.status(404).json({ error: "Page image not found" });
+        // Return placeholder SVG for missing image path
+        res.setHeader('Content-Type', 'image/svg+xml');
+        res.setHeader('X-Image-Status', 'missing-path');
+        return res.send(generatePlaceholderSVG(parseInt(pageNumber), 'Image path not found'));
       }
 
       // Sanitize and validate image path to prevent directory traversal
@@ -908,6 +1033,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           documentId: docId 
         });
         return res.status(403).json({ error: "Invalid image path" });
+      }
+
+      // Check if file actually exists, return placeholder if not
+      if (!fs.existsSync(normalizedPath)) {
+        res.setHeader('Content-Type', 'image/svg+xml');
+        res.setHeader('X-Image-Status', 'file-missing');
+        return res.send(generatePlaceholderSVG(parseInt(pageNumber), 'Image file not available'));
       }
 
       res.sendFile(normalizedPath);
@@ -951,8 +1083,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Process document function
-  async function processDocument(documentId: string, pdfBuffer: Buffer) {
+  // Process document function with audit logging
+  async function processDocument(documentId: string, pdfBuffer: Buffer, userId?: string | null) {
     try {
       await storage.updateDocument(documentId, { status: "processing" });
 
@@ -971,8 +1103,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`Extracting images for ${pageCount} pages...`);
         pageImages = await pdfProcessor.extractPageImages(pdfBuffer, documentId);
         console.log(`Successfully extracted ${pageImages.length} page images`);
+        
+        // Log successful image conversion
+        await logEvent("image_conversion", "success", {
+          documentId,
+          userId,
+          metadata: {
+            pagesExtracted: pageImages.length,
+            totalPages: pageCount,
+          },
+        });
       } catch (imageError: any) {
         console.warn("Failed to extract page images:", imageError.message);
+        
+        // Log image conversion failure
+        await logEvent("image_conversion", "failed", {
+          documentId,
+          userId,
+          errorMessage: imageError.message,
+          metadata: { totalPages: pageCount },
+        });
         // Continue without images - they're not critical for processing
       }
 
@@ -1325,10 +1475,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       await storage.updateDocument(documentId, { status: "completed" });
+      
+      // Log processing complete
+      await logEvent("processing_complete", "success", {
+        documentId,
+        userId,
+        metadata: {
+          totalPages: pageCount,
+          pagesProcessed: processedPages.length,
+          qualityIssuesFound: qualityIssues.length,
+          usedFallback,
+        },
+      });
     } catch (error: any) {
       console.error("Processing error:", error);
       await storage.updateDocument(documentId, {
         status: "failed",
+        errorMessage: error.message,
+      });
+      
+      // Log processing failure
+      await logEvent("processing_failed", "failed", {
+        documentId,
+        userId,
         errorMessage: error.message,
       });
       throw error;

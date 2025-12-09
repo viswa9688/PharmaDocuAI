@@ -1,7 +1,78 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, jsonb, integer, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, jsonb, integer, boolean, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+
+// ==========================================
+// AUTH TABLES (Required for Replit Auth)
+// ==========================================
+
+// Session storage table for Replit Auth
+export const sessions = pgTable(
+  "sessions",
+  {
+    sid: varchar("sid").primaryKey(),
+    sess: jsonb("sess").notNull(),
+    expire: timestamp("expire").notNull(),
+  },
+  (table) => [index("IDX_session_expire").on(table.expire)],
+);
+
+// User storage table for Replit Auth
+export const users = pgTable("users", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  email: varchar("email").unique(),
+  firstName: varchar("first_name"),
+  lastName: varchar("last_name"),
+  profileImageUrl: varchar("profile_image_url"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type UpsertUser = typeof users.$inferInsert;
+export type User = typeof users.$inferSelect;
+
+// ==========================================
+// AUDIT TRAIL - Processing Events
+// ==========================================
+
+// Event types for processing audit trail
+export const processingEventTypes = [
+  "document_upload",
+  "image_conversion",
+  "document_ai_extraction",
+  "page_classification",
+  "validation",
+  "signature_analysis",
+  "visual_analysis",
+  "processing_complete",
+  "processing_failed",
+  "document_viewed",
+  "alert_acknowledged",
+] as const;
+
+export type ProcessingEventType = typeof processingEventTypes[number];
+
+// Processing events table for audit trail
+export const processingEvents = pgTable("processing_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  documentId: varchar("document_id").references(() => documents.id, { onDelete: "cascade" }),
+  pageId: varchar("page_id").references(() => pages.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").references(() => users.id, { onDelete: "set null" }),
+  eventType: text("event_type").notNull(),
+  status: text("status").notNull().default("pending"), // pending, success, failed
+  errorMessage: text("error_message"),
+  metadata: jsonb("metadata").$type<Record<string, any>>().default({}),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertProcessingEventSchema = createInsertSchema(processingEvents).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type ProcessingEvent = typeof processingEvents.$inferSelect;
+export type InsertProcessingEvent = z.infer<typeof insertProcessingEventSchema>;
 
 // Batch date bounds extracted from batch details page
 export type BatchDateBounds = {

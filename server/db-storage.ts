@@ -3,6 +3,8 @@ import {
   documents, 
   pages, 
   qualityIssues,
+  users,
+  processingEvents,
   type Document,
   type InsertDocument,
   type Page,
@@ -10,8 +12,12 @@ import {
   type QualityIssue,
   type InsertQualityIssue,
   type DocumentSummary,
+  type User,
+  type UpsertUser,
+  type ProcessingEvent,
+  type InsertProcessingEvent,
 } from "@shared/schema";
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 import type { IStorage } from "./storage";
 
 export class DBStorage implements IStorage {
@@ -111,6 +117,65 @@ export class DBStorage implements IStorage {
       issueCount: issues.length,
       avgConfidence: docPages.length > 0 ? Math.round(totalConfidence / docPages.length) : 0,
     };
+  }
+
+  // User operations (required for Replit Auth)
+  async getUser(id: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
+  }
+
+  async upsertUser(userData: UpsertUser): Promise<User> {
+    const [user] = await db
+      .insert(users)
+      .values(userData)
+      .onConflictDoUpdate({
+        target: users.id,
+        set: {
+          ...userData,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return user;
+  }
+
+  // Processing Events (Audit Trail)
+  async createProcessingEvent(event: InsertProcessingEvent): Promise<ProcessingEvent> {
+    const [created] = await db.insert(processingEvents).values(event).returning();
+    return created;
+  }
+
+  async getEventsByDocument(documentId: string): Promise<ProcessingEvent[]> {
+    return db
+      .select()
+      .from(processingEvents)
+      .where(eq(processingEvents.documentId, documentId))
+      .orderBy(desc(processingEvents.createdAt));
+  }
+
+  async getEventsByPage(pageId: string): Promise<ProcessingEvent[]> {
+    return db
+      .select()
+      .from(processingEvents)
+      .where(eq(processingEvents.pageId, pageId))
+      .orderBy(desc(processingEvents.createdAt));
+  }
+
+  async getRecentEvents(limit: number = 100): Promise<ProcessingEvent[]> {
+    return db
+      .select()
+      .from(processingEvents)
+      .orderBy(desc(processingEvents.createdAt))
+      .limit(limit);
+  }
+
+  async getFailedEvents(): Promise<ProcessingEvent[]> {
+    return db
+      .select()
+      .from(processingEvents)
+      .where(eq(processingEvents.status, "failed"))
+      .orderBy(desc(processingEvents.createdAt));
   }
 }
 

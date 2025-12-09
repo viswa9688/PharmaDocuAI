@@ -57,10 +57,23 @@ The system is built on a React, Express, PostgreSQL, and TypeScript stack.
       - Anomalies are stored in page metadata and converted to "data_integrity" category ValidationAlerts
     - **Metadata Storage**: Rich extraction and layout data are stored in PostgreSQL using JSONB fields. Batch date bounds are stored at document level.
 
+### Authentication & Audit Trail (Added December 2025)
+- **Replit Auth Integration**: OpenID Connect authentication with support for Google, GitHub, and email/password login
+  - Sessions stored in PostgreSQL with 1-week TTL
+  - Users table stores profile info (id, email, firstName, lastName, profileImageUrl)
+  - Landing page shown for unauthenticated users with feature overview
+  - User navigation component with avatar dropdown and logout
+- **Processing Events Audit Trail**: Comprehensive event logging for compliance
+  - `processing_events` table tracks: document_upload, image_conversion, document_ai_extraction, page_classification, validation, processing_complete, processing_failed
+  - Each event includes: userId, documentId, pageId (optional), eventType, status, errorMessage, metadata (JSONB), timestamp
+  - API endpoints: GET /api/documents/:id/events, GET /api/events/recent, GET /api/events/failed
+- **Route Protection**: Upload and delete endpoints require authentication
+- **Placeholder Images**: SVG placeholder returned when page images are missing (instead of 404 errors), with helpful message indicating PDF-to-image conversion may have failed
+
 ### System Design Choices
 - **Backend**: Implemented with Express, integrating Drizzle ORM for database interactions.
-- **Database**: PostgreSQL is used for all persistent storage of document processing history, including document metadata, page data, and quality issues.
-- **Modularity**: Services are clearly separated (Document AI, classifier, PDF processor, layout analyzer, signature analyzer) for maintainability and scalability.
+- **Database**: PostgreSQL is used for all persistent storage of document processing history, including document metadata, page data, quality issues, user sessions, and audit trail events.
+- **Modularity**: Services are clearly separated (Document AI, classifier, PDF processor, layout analyzer, signature analyzer, replitAuth) for maintainability and scalability.
 - **Error Handling**: Comprehensive error handling and graceful fallbacks are integrated throughout the pipeline, particularly for compliance validation.
 
 ## External Dependencies

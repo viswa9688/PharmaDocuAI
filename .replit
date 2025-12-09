@@ -52,6 +52,10 @@ localPort = 41775
 externalPort = 4200
 
 [[ports]]
+localPort = 44187
+externalPort = 8008
+
+[[ports]]
 localPort = 45033
 externalPort = 6800
 
@@ -89,3 +93,6 @@ waitForPort = 5000
 GOOGLE_CLOUD_PROJECT_ID = "pharmacydocuscanner"
 GOOGLE_CLOUD_LOCATION = "us"
 GOOGLE_DOCUMENT_AI_PROCESSOR_ID = "870b7b61f99f718f"
+
+[agent]
+integrations = ["javascript_log_in_with_replit:1.0.0"]
