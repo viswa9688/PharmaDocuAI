@@ -242,6 +242,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Dashboard summary endpoint - aggregates validation metrics across documents
+  // Uses same validation logic as /api/documents/:id/validation for consistency
   app.get("/api/dashboard/summary", async (_req, res) => {
     try {
       const documents = await storage.getAllDocuments();
@@ -261,7 +262,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let totalAlerts = 0;
       let documentsWithIssues = 0;
       
-      // Process each completed document
+      // Process each completed document using the SAME logic as /api/documents/:id/validation
       for (const doc of completedDocs) {
         const pages = await storage.getPagesByDocument(doc.id);
         totalPages += pages.length;
@@ -269,57 +270,75 @@ export async function registerRoutes(app: Express): Promise<Server> {
         let docHasIssues = false;
         let docHasPageCompletenessIssue = false;
         
-        // Track checks per page for proper pass/fail counting
-        let pageDataIntegrityChecks = 0;
-        let pageDateChecks = 0;
-        let pageBatchChecks = 0;
-        
-        // Run validation on all pages
-        for (const page of pages) {
-          const result = await validationEngine.validatePage(
-            page.pageNumber,
-            page.metadata || {},
-            page.classification,
-            page.extractedText || ""
-          );
-          
-          const metadata = page.metadata as Record<string, any> || {};
-          
-          // Count data integrity checks (1 per page - was page scanned cleanly?)
-          pageDataIntegrityChecks++;
-          
-          // Count date checks if page has extracted dates
-          if (result.extractedValues?.some((v: any) => v.valueType === 'date' || v.valueType === 'datetime')) {
-            pageDateChecks++;
-          }
-          
-          // Count batch number checks if page has batch field
-          if (metadata.extraction?.formFields?.some((f: any) => 
-            /batch|lot/i.test(f.fieldName || '') || /batch|lot/i.test(f.fieldValue || '')
-          )) {
-            pageBatchChecks++;
-          }
-          
-          // Add visual anomaly alerts
-          let hasDataIntegrityIssue = false;
-          if (metadata.visualAnomalies && Array.isArray(metadata.visualAnomalies) && metadata.visualAnomalies.length > 0) {
-            const visualAlerts = validationEngine.createVisualAnomalyAlerts(metadata.visualAnomalies);
-            result.alerts.push(...visualAlerts);
-            hasDataIntegrityIssue = visualAlerts.length > 0;
-          }
-          
-          // Run signature analysis
-          if (metadata.extraction) {
-            try {
-              const approvalAnalysis = signatureAnalyzer.analyze({
-                tables: metadata.extraction.tables,
-                handwrittenRegions: metadata.extraction.handwrittenRegions,
-                signatures: metadata.extraction.signatures,
-                formFields: metadata.extraction.formFields,
-                textBlocks: metadata.extraction.textBlocks || metadata.layoutAnalysis?.textBlocks,
-              });
+        // Run validation on all pages (same as validation endpoint)
+        const pageResults = await Promise.all(
+          pages.map(async (page) => {
+            const result = await validationEngine.validatePage(
+              page.pageNumber,
+              page.metadata || {},
+              page.classification,
+              page.extractedText || ""
+            );
+            
+            const metadata = page.metadata as Record<string, any> || {};
+            
+            // Add visual anomaly alerts
+            if (metadata.visualAnomalies && Array.isArray(metadata.visualAnomalies) && metadata.visualAnomalies.length > 0) {
+              const visualAlerts = validationEngine.createVisualAnomalyAlerts(metadata.visualAnomalies);
+              result.alerts.push(...visualAlerts);
+            }
+            
+            // Run signature analysis
+            let signatureFields: any[] | null = null;
+            if (metadata.extraction) {
+              try {
+                const approvalAnalysis = signatureAnalyzer.analyze({
+                  tables: metadata.extraction.tables,
+                  handwrittenRegions: metadata.extraction.handwrittenRegions,
+                  signatures: metadata.extraction.signatures,
+                  formFields: metadata.extraction.formFields,
+                  textBlocks: metadata.extraction.textBlocks || metadata.layoutAnalysis?.textBlocks,
+                });
+                signatureFields = approvalAnalysis.signatureFields;
+              } catch (err) {
+                console.error(`Signature analysis failed for page ${page.pageNumber}:`, err);
+                signatureFields = metadata.approvals?.signatureFields || null;
+              }
+            } else {
+              signatureFields = metadata.approvals?.signatureFields || null;
+            }
+            
+            // Add signature alerts for missing signatures
+            if (signatureFields && Array.isArray(signatureFields)) {
+              for (const field of signatureFields) {
+                if (!field.isSigned) {
+                  result.alerts.push({
+                    id: `sig-missing-${page.pageNumber}-${field.fieldLabel}`,
+                    category: "missing_value",
+                    severity: "high",
+                    title: "Missing Signature",
+                    message: `Signature field "${field.fieldLabel}" is empty on Page ${page.pageNumber}`,
+                    details: `Field: ${field.fieldLabel}`,
+                    source: {
+                      pageNumber: page.pageNumber,
+                      sectionType: page.classification || "unknown",
+                      fieldLabel: field.fieldLabel,
+                      boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+                      surroundingContext: "",
+                    },
+                    relatedValues: [],
+                    suggestedAction: "Obtain signature for this field",
+                    ruleId: "signature_required",
+                    formulaId: null,
+                    isResolved: false,
+                    resolvedBy: null,
+                    resolvedAt: null,
+                    resolution: null,
+                  });
+                }
+              }
               
-              const signatureFields = approvalAnalysis.signatureFields || [];
+              // Count signature fields
               const missingSignatures = signatureFields.filter((f: any) => !f.isSigned);
               const signedFields = signatureFields.filter((f: any) => f.isSigned);
               
@@ -328,74 +347,143 @@ export async function registerRoutes(app: Express): Promise<Server> {
               categories.signatures.failed += missingSignatures.length;
               
               if (missingSignatures.length > 0) docHasIssues = true;
-            } catch (err) {
-              console.error(`Signature analysis failed for page ${page.pageNumber}:`, err);
             }
-          }
-          
-          // Categorize alerts and track failures
-          let hasDateIssue = false;
-          let hasBatchIssue = false;
-          let hasCalculationIssue = false;
-          let hasPageCompletenessIssue = false;
-          
-          for (const alert of result.alerts) {
-            totalAlerts++;
-            docHasIssues = true;
             
+            return result;
+          })
+        );
+        
+        // Run document-level validation (batch numbers, date bounds, etc)
+        const batchDateBounds = validationEngine.extractBatchDateBounds(pageResults);
+        const batchDateAlerts = validationEngine.validateDatesAgainstBatchWindow(pageResults, batchDateBounds);
+        const extractionAlerts = validationEngine.generateBatchDateExtractionAlerts(batchDateBounds);
+        const summary = await validationEngine.validateDocument(doc.id, pageResults);
+        
+        // Document-level alerts from cross-page checks
+        const documentLevelAlerts = [
+          ...summary.crossPageIssues,
+          ...batchDateAlerts,
+          ...extractionAlerts
+        ];
+        
+        // Process page-level alerts for per-page counting
+        for (const pageResult of pageResults) {
+          const page = pages.find(p => p.pageNumber === pageResult.pageNumber);
+          const metadata = page?.metadata as Record<string, any> || {};
+          
+          // Data integrity: check visual anomalies per page
+          let hasDataIntegrityIssue = false;
+          for (const alert of pageResult.alerts) {
             if (alert.category === "data_integrity") {
               hasDataIntegrityIssue = true;
-            } else if (alert.category === "calculation_error") {
-              categories.calculations.failed++;
-              categories.calculations.total++;
-              hasCalculationIssue = true;
-            } else if (alert.category === "sequence_error") {
-              hasDateIssue = true;
-            } else if (alert.category === "missing_value" && 
-                       (alert.title?.toLowerCase().includes("batch") || 
-                        alert.title?.toLowerCase().includes("lot"))) {
-              hasBatchIssue = true;
-            } else if (alert.category === "consistency_error" || 
-                       (alert.category === "missing_value" && alert.title?.includes("Page"))) {
-              hasPageCompletenessIssue = true;
             }
           }
-          
-          // Data integrity: every page is checked, count once per page
           categories.dataIntegrity.total++;
           if (hasDataIntegrityIssue) {
             categories.dataIntegrity.failed++;
+            docHasIssues = true;
           } else {
             categories.dataIntegrity.passed++;
           }
           
-          // Date checks: only count if page has dates to validate, count once per page
-          if (pageDateChecks > 0) {
+          // Calculations: count each calculation_error alert
+          for (const alert of pageResult.alerts) {
+            if (alert.category === "calculation_error") {
+              categories.calculations.total++;
+              categories.calculations.failed++;
+              docHasIssues = true;
+              totalAlerts++;
+            }
+          }
+          
+          // Date checks: count pages that have date data
+          const hasDateData = pageResult.extractedValues?.some((v: any) => 
+            v.valueType === 'date' || v.valueType === 'datetime'
+          );
+          if (hasDateData) {
+            let hasDateIssue = false;
+            for (const alert of pageResult.alerts) {
+              if (alert.category === "sequence_error") {
+                hasDateIssue = true;
+              }
+            }
             categories.dates.total++;
             if (hasDateIssue) {
               categories.dates.failed++;
+              docHasIssues = true;
             } else {
               categories.dates.passed++;
             }
           }
           
-          // Batch checks: only count if page has batch/lot fields, count once per page
-          if (pageBatchChecks > 0) {
+          // Batch checks: count pages that have batch/lot fields
+          const hasBatchData = metadata.extraction?.formFields?.some((f: any) => 
+            /batch|lot/i.test(f.fieldName || '') || /batch|lot/i.test(f.fieldValue || '')
+          );
+          if (hasBatchData) {
+            let hasBatchIssue = false;
+            for (const alert of pageResult.alerts) {
+              if (alert.category === "missing_value" && 
+                  (alert.title?.toLowerCase().includes("batch") || 
+                   alert.title?.toLowerCase().includes("lot"))) {
+                hasBatchIssue = true;
+              }
+            }
             categories.batchNumbers.total++;
             if (hasBatchIssue) {
               categories.batchNumbers.failed++;
+              docHasIssues = true;
             } else {
               categories.batchNumbers.passed++;
             }
           }
           
-          // Track page completeness issues for this document
-          if (hasPageCompletenessIssue) {
+          // Page completeness issues
+          for (const alert of pageResult.alerts) {
+            if (alert.category === "consistency_error" || 
+                (alert.category === "missing_value" && alert.title?.includes("Page"))) {
+              docHasPageCompletenessIssue = true;
+            }
+          }
+          
+          // Count other alerts
+          for (const alert of pageResult.alerts) {
+            if (alert.category !== "calculation_error") {
+              totalAlerts++;
+            }
+          }
+        }
+        
+        // Process document-level alerts (cross-page batch/lot/date issues)
+        for (const alert of documentLevelAlerts) {
+          totalAlerts++;
+          docHasIssues = true;
+          
+          // Document-level batch alerts (from checkBatchNumberConsistency, extractBatchDateBounds)
+          if (alert.category === "missing_value" && 
+              (alert.title?.toLowerCase().includes("batch") || 
+               alert.title?.toLowerCase().includes("lot") ||
+               alert.title?.toLowerCase().includes("commencement") ||
+               alert.title?.toLowerCase().includes("completion"))) {
+            // Add a check for this document-level issue
+            categories.batchNumbers.total++;
+            categories.batchNumbers.failed++;
+          }
+          
+          // Document-level date sequence errors
+          if (alert.category === "sequence_error") {
+            categories.dates.total++;
+            categories.dates.failed++;
+          }
+          
+          // Document-level consistency errors (page completeness)
+          if (alert.category === "consistency_error" || 
+              (alert.category === "missing_value" && alert.title?.includes("Page"))) {
             docHasPageCompletenessIssue = true;
           }
         }
         
-        // Page completeness: count document as 1 check (scoped to this document)
+        // Page completeness: 1 check per document
         categories.pageCompleteness.total++;
         if (docHasPageCompletenessIssue) {
           categories.pageCompleteness.failed++;
@@ -412,7 +500,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const passRate = totalChecks > 0 ? Math.round((totalPassed / totalChecks) * 100) : 100;
       
       // Determine overall status
-      const criticalIssues = categories.signatures.failed + categories.dataIntegrity.failed;
+      const criticalIssues = categories.signatures.failed + categories.dataIntegrity.failed + categories.batchNumbers.failed;
       const overallStatus = criticalIssues === 0 ? "compliant" : criticalIssues < 5 ? "review_required" : "non_compliant";
       
       res.json({
@@ -466,6 +554,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get per-document validation summary (same format as global dashboard)
+  // Uses same validation logic as /api/documents/:id/validation for consistency
   app.get("/api/documents/:id/validation-summary", async (req, res) => {
     try {
       const doc = await storage.getDocument(req.params.id);
@@ -485,88 +574,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
         pageCompleteness: { passed: 0, failed: 0, total: 0 },
       };
       
-      let totalAlerts = 0;
-      let hasPageCompletenessIssue = false;
-      
-      // Process each page
-      for (const page of pages) {
-        const result = await validationEngine.validatePage(
-          page.pageNumber,
-          page.metadata || {},
-          page.classification,
-          page.extractedText || ""
-        );
-        
-        const metadata = page.metadata as Record<string, any> || {};
-        
-        // Each page is a data integrity check opportunity
-        let hasDataIntegrityIssue = false;
-        
-        // Add visual anomaly alerts
-        if (metadata.visualAnomalies && Array.isArray(metadata.visualAnomalies) && metadata.visualAnomalies.length > 0) {
-          const visualAlerts = validationEngine.createVisualAnomalyAlerts(metadata.visualAnomalies);
-          result.alerts.push(...visualAlerts);
-          if (visualAlerts.length > 0) {
-            hasDataIntegrityIssue = true;
+      // Run validation on all pages (same as validation endpoint)
+      const pageResults = await Promise.all(
+        pages.map(async (page) => {
+          const result = await validationEngine.validatePage(
+            page.pageNumber,
+            page.metadata || {},
+            page.classification,
+            page.extractedText || ""
+          );
+          
+          const metadata = page.metadata as Record<string, any> || {};
+          
+          // Add visual anomaly alerts
+          if (metadata.visualAnomalies && Array.isArray(metadata.visualAnomalies) && metadata.visualAnomalies.length > 0) {
+            const visualAlerts = validationEngine.createVisualAnomalyAlerts(metadata.visualAnomalies);
+            result.alerts.push(...visualAlerts);
           }
-        }
-        
-        // Run signature analysis
-        if (metadata.extraction) {
-          try {
-            const approvalAnalysis = signatureAnalyzer.analyze({
-              tables: metadata.extraction.tables,
-              handwrittenRegions: metadata.extraction.handwrittenRegions,
-              signatures: metadata.extraction.signatures,
-              formFields: metadata.extraction.formFields,
-              textBlocks: metadata.extraction.textBlocks || metadata.layoutAnalysis?.textBlocks,
-            });
-            
-            const signatureFields = approvalAnalysis.signatureFields || [];
+          
+          // Run signature analysis
+          let signatureFields: any[] | null = null;
+          if (metadata.extraction) {
+            try {
+              const approvalAnalysis = signatureAnalyzer.analyze({
+                tables: metadata.extraction.tables,
+                handwrittenRegions: metadata.extraction.handwrittenRegions,
+                signatures: metadata.extraction.signatures,
+                formFields: metadata.extraction.formFields,
+                textBlocks: metadata.extraction.textBlocks || metadata.layoutAnalysis?.textBlocks,
+              });
+              signatureFields = approvalAnalysis.signatureFields;
+            } catch (err) {
+              console.error(`Signature analysis failed for page ${page.pageNumber}:`, err);
+              signatureFields = metadata.approvals?.signatureFields || null;
+            }
+          } else {
+            signatureFields = metadata.approvals?.signatureFields || null;
+          }
+          
+          // Count signature fields
+          if (signatureFields && Array.isArray(signatureFields)) {
             const missingSignatures = signatureFields.filter((f: any) => !f.isSigned);
             const signedFields = signatureFields.filter((f: any) => f.isSigned);
             
             categories.signatures.total += signatureFields.length;
             categories.signatures.passed += signedFields.length;
             categories.signatures.failed += missingSignatures.length;
-          } catch (err) {
-            console.error(`Signature analysis failed for page ${page.pageNumber}:`, err);
           }
-        }
-        
-        // Count date checks if page has extracted dates
-        const hasDateCheck = result.extractedValues?.some((v: any) => v.valueType === 'date' || v.valueType === 'datetime');
-        
-        // Count batch number checks if page has batch field
-        const hasBatchCheck = metadata.extraction?.formFields?.some((f: any) => 
-          /batch|lot/i.test(f.fieldName || '') || /batch|lot/i.test(f.fieldValue || '')
-        );
-        
-        // Categorize alerts and track failures
-        let hasDateIssue = false;
-        let hasBatchIssue = false;
-        
-        for (const alert of result.alerts) {
-          totalAlerts++;
           
+          return result;
+        })
+      );
+      
+      // Run document-level validation (batch numbers, date bounds, etc)
+      const batchDateBounds = validationEngine.extractBatchDateBounds(pageResults);
+      const batchDateAlerts = validationEngine.validateDatesAgainstBatchWindow(pageResults, batchDateBounds);
+      const extractionAlerts = validationEngine.generateBatchDateExtractionAlerts(batchDateBounds);
+      const summary = await validationEngine.validateDocument(req.params.id, pageResults);
+      
+      // Document-level alerts from cross-page checks
+      const documentLevelAlerts = [
+        ...summary.crossPageIssues,
+        ...batchDateAlerts,
+        ...extractionAlerts
+      ];
+      
+      let totalAlerts = 0;
+      let hasPageCompletenessIssue = false;
+      
+      // Process page-level alerts for per-page counting
+      for (const pageResult of pageResults) {
+        const page = pages.find(p => p.pageNumber === pageResult.pageNumber);
+        const metadata = page?.metadata as Record<string, any> || {};
+        
+        // Data integrity: check visual anomalies per page
+        let hasDataIntegrityIssue = false;
+        for (const alert of pageResult.alerts) {
           if (alert.category === "data_integrity") {
             hasDataIntegrityIssue = true;
-          } else if (alert.category === "calculation_error") {
-            categories.calculations.failed++;
-            categories.calculations.total++;
-          } else if (alert.category === "sequence_error") {
-            hasDateIssue = true;
-          } else if (alert.category === "missing_value" && 
-                     (alert.title?.toLowerCase().includes("batch") || 
-                      alert.title?.toLowerCase().includes("lot"))) {
-            hasBatchIssue = true;
-          } else if (alert.category === "consistency_error" || 
-                     (alert.category === "missing_value" && alert.title?.includes("Page"))) {
-            hasPageCompletenessIssue = true;
           }
         }
-        
-        // Data integrity: every page is checked, pass if no issues (count once per page)
         categories.dataIntegrity.total++;
         if (hasDataIntegrityIssue) {
           categories.dataIntegrity.failed++;
@@ -574,8 +661,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
           categories.dataIntegrity.passed++;
         }
         
-        // Date checks: only count if page has dates to validate, count once per page
-        if (hasDateCheck) {
+        // Calculations: count each calculation_error alert
+        for (const alert of pageResult.alerts) {
+          if (alert.category === "calculation_error") {
+            categories.calculations.total++;
+            categories.calculations.failed++;
+            totalAlerts++;
+          }
+        }
+        
+        // Date checks: count pages that have date data
+        const hasDateData = pageResult.extractedValues?.some((v: any) => 
+          v.valueType === 'date' || v.valueType === 'datetime'
+        );
+        if (hasDateData) {
+          let hasDateIssue = false;
+          for (const alert of pageResult.alerts) {
+            if (alert.category === "sequence_error") {
+              hasDateIssue = true;
+            }
+          }
           categories.dates.total++;
           if (hasDateIssue) {
             categories.dates.failed++;
@@ -584,8 +689,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
         
-        // Batch checks: only count if page has batch/lot fields, count once per page
-        if (hasBatchCheck) {
+        // Batch checks: count pages that have batch/lot fields
+        const hasBatchData = metadata.extraction?.formFields?.some((f: any) => 
+          /batch|lot/i.test(f.fieldName || '') || /batch|lot/i.test(f.fieldValue || '')
+        );
+        if (hasBatchData) {
+          let hasBatchIssue = false;
+          for (const alert of pageResult.alerts) {
+            if (alert.category === "missing_value" && 
+                (alert.title?.toLowerCase().includes("batch") || 
+                 alert.title?.toLowerCase().includes("lot"))) {
+              hasBatchIssue = true;
+            }
+          }
           categories.batchNumbers.total++;
           if (hasBatchIssue) {
             categories.batchNumbers.failed++;
@@ -593,16 +709,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
             categories.batchNumbers.passed++;
           }
         }
+        
+        // Page completeness issues
+        for (const alert of pageResult.alerts) {
+          if (alert.category === "consistency_error" || 
+              (alert.category === "missing_value" && alert.title?.includes("Page"))) {
+            hasPageCompletenessIssue = true;
+          }
+        }
+        
+        // Count other alerts
+        for (const alert of pageResult.alerts) {
+          if (alert.category !== "calculation_error") {
+            totalAlerts++;
+          }
+        }
       }
       
-      // Page completeness: count document as 1 check (scoped to this document)
+      // Process document-level alerts (cross-page batch/lot/date issues)
+      for (const alert of documentLevelAlerts) {
+        totalAlerts++;
+        
+        // Document-level batch alerts (from checkBatchNumberConsistency, extractBatchDateBounds)
+        if (alert.category === "missing_value" && 
+            (alert.title?.toLowerCase().includes("batch") || 
+             alert.title?.toLowerCase().includes("lot") ||
+             alert.title?.toLowerCase().includes("commencement") ||
+             alert.title?.toLowerCase().includes("completion"))) {
+          // Add a check for this document-level issue
+          categories.batchNumbers.total++;
+          categories.batchNumbers.failed++;
+        }
+        
+        // Document-level date sequence errors
+        if (alert.category === "sequence_error") {
+          categories.dates.total++;
+          categories.dates.failed++;
+        }
+        
+        // Document-level consistency errors (page completeness)
+        if (alert.category === "consistency_error" || 
+            (alert.category === "missing_value" && alert.title?.includes("Page"))) {
+          hasPageCompletenessIssue = true;
+        }
+      }
+      
+      // Page completeness: 1 check per document
       categories.pageCompleteness.total = 1;
-      if (!hasPageCompletenessIssue) {
+      if (hasPageCompletenessIssue) {
+        categories.pageCompleteness.failed = 1;
+        categories.pageCompleteness.passed = 0;
+      } else {
         categories.pageCompleteness.passed = 1;
         categories.pageCompleteness.failed = 0;
-      } else {
-        categories.pageCompleteness.passed = 0;
-        categories.pageCompleteness.failed = 1;
       }
       
       // Calculate overall pass rate
@@ -611,7 +770,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const passRate = totalChecks > 0 ? Math.round((totalPassed / totalChecks) * 100) : 100;
       
       // Determine overall status
-      const criticalIssues = categories.signatures.failed + categories.dataIntegrity.failed;
+      const criticalIssues = categories.signatures.failed + categories.dataIntegrity.failed + categories.batchNumbers.failed;
       const overallStatus = criticalIssues === 0 ? "compliant" : criticalIssues < 5 ? "review_required" : "non_compliant";
       
       res.json({
