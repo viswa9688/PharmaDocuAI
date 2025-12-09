@@ -78,7 +78,9 @@ export default function AuditTrail() {
   const [selectedEvent, setSelectedEvent] = useState<EventWithUser | null>(null);
 
   const { data: events = [], isLoading } = useQuery<EventWithUser[]>({
-    queryKey: ["/api/events/recent", { limit: 500 }],
+    queryKey: ["/api/events/recent?limit=500"],
+    staleTime: 0, // Always fetch fresh data on navigation
+    refetchInterval: 10000, // Auto-refresh every 10 seconds
   });
 
   const filteredEvents = events.filter((event) => {
