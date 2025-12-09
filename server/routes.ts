@@ -798,12 +798,169 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get quality issues for document
+  // Get quality issues for document (with automatic sync from validation alerts)
   app.get("/api/documents/:id/issues", async (req, res) => {
     try {
-      const issues = await storage.getIssuesByDocument(req.params.id);
-      res.json(issues);
+      const documentId = req.params.id;
+      
+      // First check existing issues
+      let existingIssues = await storage.getIssuesByDocument(documentId);
+      
+      // If no issues exist, generate them from validation alerts
+      if (existingIssues.length === 0) {
+        const doc = await storage.getDocument(documentId);
+        if (!doc) {
+          return res.status(404).json({ error: "Document not found" });
+        }
+        
+        const pages = await storage.getPagesByDocument(documentId);
+        
+        if (pages.length > 0) {
+          // Run validation to get alerts
+          const pageResults = await Promise.all(
+            pages.map(async (page) => {
+              const result = await validationEngine.validatePage(
+                page.pageNumber,
+                page.metadata || {},
+                page.classification,
+                page.extractedText || ""
+              );
+              
+              // Run signature analysis
+              const metadata = page.metadata as Record<string, any> || {};
+              if (metadata.extraction) {
+                try {
+                  const approvalAnalysis = signatureAnalyzer.analyze({
+                    tables: metadata.extraction.tables,
+                    handwrittenRegions: metadata.extraction.handwrittenRegions,
+                    signatures: metadata.extraction.signatures,
+                    formFields: metadata.extraction.formFields,
+                    textBlocks: metadata.extraction.textBlocks || metadata.layoutAnalysis?.textBlocks,
+                  });
+                  
+                  // Add missing signature alerts
+                  if (approvalAnalysis.signatureFields) {
+                    for (const field of approvalAnalysis.signatureFields) {
+                      if (!field.isSigned) {
+                        result.alerts.push({
+                          id: `sig-missing-${page.pageNumber}-${field.fieldLabel}`,
+                          category: "missing_value",
+                          severity: "high",
+                          title: "Missing Signature",
+                          message: `Signature field "${field.fieldLabel}" is empty on Page ${page.pageNumber}`,
+                          details: `Field: ${field.fieldLabel}`,
+                          source: {
+                            pageNumber: page.pageNumber,
+                            sectionType: page.classification || "unknown",
+                            fieldLabel: field.fieldLabel,
+                            boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+                            surroundingContext: "",
+                          },
+                          relatedValues: [],
+                          suggestedAction: "Obtain signature for this field",
+                          ruleId: "signature_required",
+                          formulaId: null,
+                          isResolved: false,
+                          resolvedBy: null,
+                          resolvedAt: null,
+                          resolution: null,
+                        });
+                      }
+                    }
+                  }
+                } catch (err) {
+                  console.error(`Signature analysis failed for page ${page.pageNumber}:`, err);
+                }
+              }
+              
+              return result;
+            })
+          );
+          
+          // Collect all alerts
+          const allAlerts: any[] = [];
+          for (const pageResult of pageResults) {
+            for (const alert of pageResult.alerts) {
+              allAlerts.push(alert);
+            }
+          }
+          
+          // Add document-level alerts
+          const batchDateBounds = validationEngine.extractBatchDateBounds(pageResults);
+          const batchDateAlerts = validationEngine.validateDatesAgainstBatchWindow(pageResults, batchDateBounds);
+          const extractionAlerts = validationEngine.generateBatchDateExtractionAlerts(batchDateBounds);
+          const summary = await validationEngine.validateDocument(documentId, pageResults);
+          
+          allAlerts.push(...summary.crossPageIssues, ...batchDateAlerts, ...extractionAlerts);
+          
+          // Create quality issues from alerts (only high/critical severity)
+          const createdIssueIds = new Set<string>();
+          for (const alert of allAlerts) {
+            // Skip already processed alerts
+            const alertId = alert.id || `${alert.category}-${alert.title}-${alert.source?.pageNumber || 0}`;
+            if (createdIssueIds.has(alertId)) continue;
+            createdIssueIds.add(alertId);
+            
+            // Get page numbers from alert
+            const pageNumbers: number[] = [];
+            if (alert.source?.pageNumber) {
+              pageNumbers.push(alert.source.pageNumber);
+            }
+            
+            // Map alert category to issue type
+            const issueType = alert.category || "validation_error";
+            const severity = alert.severity || "medium";
+            
+            // Create quality issue
+            await storage.createQualityIssue({
+              documentId,
+              issueType,
+              severity,
+              description: alert.message || alert.title || "Validation issue detected",
+              pageNumbers,
+            });
+          }
+          
+          // Refetch issues after creation
+          existingIssues = await storage.getIssuesByDocument(documentId);
+        }
+      }
+      
+      // Now fetch issues with resolutions
+      const issuesWithResolutions = await Promise.all(
+        existingIssues.map(async (issue) => {
+          const resolutions = await storage.getIssueResolutions(issue.id);
+          return {
+            issue,
+            resolutions: resolutions.map(r => ({
+              id: r.id,
+              status: r.status,
+              comment: r.comment,
+              userId: r.userId,
+              createdAt: r.createdAt,
+            })),
+          };
+        })
+      );
+      
+      // Calculate counts
+      const counts = {
+        total: existingIssues.length,
+        pending: existingIssues.filter(i => i.resolutionStatus === 'pending').length,
+        approved: existingIssues.filter(i => i.resolutionStatus === 'approved').length,
+        rejected: existingIssues.filter(i => i.resolutionStatus === 'rejected').length,
+      };
+      
+      const doc = await storage.getDocument(documentId);
+      
+      res.json({
+        documentId,
+        filename: doc?.filename || 'Unknown',
+        issues: issuesWithResolutions,
+        counts,
+      });
     } catch (error: any) {
+      console.error("Get issues error:", error);
       res.status(500).json({ error: error.message });
     }
   });
