@@ -50,6 +50,8 @@ export const processingEventTypes = [
   "processing_failed",
   "document_viewed",
   "alert_acknowledged",
+  "document_approved",
+  "document_unapproved",
 ] as const;
 
 export type ProcessingEventType = typeof processingEventTypes[number];
@@ -100,6 +102,10 @@ export const documents = pgTable("documents", {
   errorMessage: text("error_message"),
   // Batch date bounds for temporal validation
   batchDateBounds: jsonb("batch_date_bounds").$type<BatchDateBounds>(),
+  // Approval status for batch records
+  isApproved: boolean("is_approved").default(false).notNull(),
+  approvedBy: varchar("approved_by").references(() => users.id, { onDelete: "set null" }),
+  approvedAt: timestamp("approved_at"),
 });
 
 // Page classifications

@@ -16,6 +16,7 @@ import Settings from "@/pages/settings";
 import Dashboard from "@/pages/dashboard";
 import Landing from "@/pages/landing";
 import AuditTrail from "@/pages/audit-trail";
+import Approved from "@/pages/approved";
 import { useAuth } from "@/hooks/useAuth";
 
 function Router() {
@@ -26,6 +27,7 @@ function Router() {
       <Route path="/documents" component={Documents} />
       <Route path="/documents/:id" component={DocumentViewer} />
       <Route path="/processing" component={Processing} />
+      <Route path="/approvals" component={Approved} />
       <Route path="/audit-trail" component={AuditTrail} />
       <Route path="/settings" component={Settings} />
       <Route component={NotFound} />

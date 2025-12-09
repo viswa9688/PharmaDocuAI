@@ -42,6 +42,8 @@ import {
   FileCheck,
   Shield,
   Signature,
+  ThumbsUp,
+  ThumbsDown,
 } from "lucide-react";
 import { formatDistance, format } from "date-fns";
 import type { ProcessingEvent, User } from "@shared/schema";
@@ -63,6 +65,8 @@ const eventTypeConfig: Record<string, { label: string; icon: any; color: string 
   processing_failed: { label: "Processing Failed", icon: XCircle, color: "bg-red-600" },
   document_viewed: { label: "Document Viewed", icon: Eye, color: "bg-slate-500" },
   alert_acknowledged: { label: "Alert Acknowledged", icon: AlertTriangle, color: "bg-orange-500" },
+  document_approved: { label: "Document Approved", icon: ThumbsUp, color: "bg-green-600" },
+  document_unapproved: { label: "Document Unapproved", icon: ThumbsDown, color: "bg-yellow-500" },
 };
 
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "destructive" }> = {

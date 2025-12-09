@@ -1188,6 +1188,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Approve or unapprove document (requires authentication)
+  app.patch("/api/documents/:id/approve", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub || null;
+      const documentId = req.params.id;
+      const { isApproved } = req.body;
+      
+      if (typeof isApproved !== "boolean") {
+        return res.status(400).json({ error: "isApproved must be a boolean" });
+      }
+      
+      const doc = await storage.getDocument(documentId);
+      if (!doc) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+      
+      // Update document approval status
+      const updates: any = {
+        isApproved,
+        approvedBy: isApproved ? userId : null,
+        approvedAt: isApproved ? new Date() : null,
+      };
+      
+      const updated = await storage.updateDocument(documentId, updates);
+      
+      // Log approval event
+      await logEvent(isApproved ? "document_approved" : "document_unapproved", "success", {
+        documentId,
+        userId,
+        metadata: {
+          filename: doc.filename,
+          previousApprovalStatus: doc.isApproved,
+          newApprovalStatus: isApproved,
+        },
+      });
+      
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Delete document (requires authentication)
   app.delete("/api/documents/:id", isAuthenticated, async (req: any, res) => {
     try {
