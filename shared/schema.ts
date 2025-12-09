@@ -39,6 +39,7 @@ export type User = typeof users.$inferSelect;
 // Event types for processing audit trail
 export const processingEventTypes = [
   "document_upload",
+  "document_delete",
   "image_conversion",
   "document_ai_extraction",
   "page_classification",

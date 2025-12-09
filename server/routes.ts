@@ -111,12 +111,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get all recent processing events
+  // Get all recent processing events with user info
   app.get("/api/events/recent", isAuthenticated, async (req, res) => {
     try {
       const limit = parseInt(req.query.limit as string) || 100;
       const events = await storage.getRecentEvents(limit);
-      res.json(events);
+      
+      // Attach user info to each event
+      const eventsWithUsers = await Promise.all(
+        events.map(async (event) => {
+          let user = null;
+          if (event.userId) {
+            user = await storage.getUser(event.userId);
+          }
+          return { ...event, user };
+        })
+      );
+      
+      res.json(eventsWithUsers);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1018,12 +1030,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Delete document (requires authentication)
-  app.delete("/api/documents/:id", isAuthenticated, async (req, res) => {
+  app.delete("/api/documents/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const deleted = await storage.deleteDocument(req.params.id);
+      const userId = req.user?.claims?.sub || null;
+      const documentId = req.params.id;
+      
+      // Get document info before deletion for audit log
+      const doc = await storage.getDocument(documentId);
+      if (!doc) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+      
+      // Log deletion event BEFORE deleting so we preserve documentId for audit trail
+      await logEvent("document_delete", "success", {
+        documentId,
+        userId,
+        metadata: {
+          filename: doc.filename,
+          fileSize: doc.fileSize,
+          totalPages: doc.totalPages,
+          status: doc.status,
+        },
+      });
+      
+      const deleted = await storage.deleteDocument(documentId);
       if (!deleted) {
         return res.status(404).json({ error: "Document not found" });
       }
+      
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

@@ -9,7 +9,7 @@ import {
   SidebarMenuItem,
   SidebarHeader,
 } from "@/components/ui/sidebar";
-import { Upload, FileText, FolderOpen, Settings, LayoutDashboard } from "lucide-react";
+import { Upload, FileText, FolderOpen, Settings, LayoutDashboard, History } from "lucide-react";
 import { Link, useLocation } from "wouter";
 
 const menuItems = [
@@ -32,6 +32,11 @@ const menuItems = [
     title: "Document Library",
     url: "/documents",
     icon: FolderOpen,
+  },
+  {
+    title: "Audit Trail",
+    url: "/audit-trail",
+    icon: History,
   },
   {
     title: "Settings",
