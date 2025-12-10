@@ -2286,31 +2286,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       });
 
-      // Detect quality issues
-      const qualityIssues = await classifier.detectQualityIssues(processedPages);
-
-      // Log validation stage
-      await logEvent("validation", "success", {
-        documentId,
-        userId,
-        metadata: {
-          qualityIssuesFound: qualityIssues.length,
-          issueSeverities: qualityIssues.reduce((acc, i) => {
-            acc[i.severity] = (acc[i.severity] || 0) + 1;
-            return acc;
-          }, {} as Record<string, number>),
-        },
-      });
-
-      for (const issue of qualityIssues) {
-        await storage.createQualityIssue({
-          documentId,
-          issueType: issue.type,
-          severity: issue.severity,
-          description: issue.description,
-          pageNumbers: issue.pageNumbers,
-        });
-      }
+      // Note: Quality issues are now created on-demand when fetching /api/documents/:id/issues
+      // This ensures they have proper location data for bounding box highlighting
+      // The GET /issues endpoint will run validation and create issues with locations
 
       await storage.updateDocument(documentId, { status: "completed" });
       
@@ -2321,7 +2299,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         metadata: {
           totalPages: pageCount,
           pagesProcessed: processedPages.length,
-          qualityIssuesFound: qualityIssues.length,
           usedFallback,
         },
       });
