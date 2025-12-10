@@ -128,6 +128,63 @@ export async function setupAuth(app: Express) {
       );
     });
   });
+
+  // Test login endpoint - only available in development
+  const TEST_USER = {
+    id: "test-user-001",
+    email: "testuser@example.com",
+    firstName: "Test",
+    lastName: "User",
+    profileImageUrl: null,
+  };
+  const TEST_PASSWORD = "testpass123";
+
+  app.post("/api/test-login", async (req, res) => {
+    const { userId, password } = req.body;
+
+    if (userId !== TEST_USER.id || password !== TEST_PASSWORD) {
+      return res.status(401).json({ message: "Invalid test credentials" });
+    }
+
+    try {
+      // Upsert test user in database
+      await dbStorage.upsertUser(TEST_USER);
+
+      // Create a fake session for test user
+      const testUserSession = {
+        claims: {
+          sub: TEST_USER.id,
+          email: TEST_USER.email,
+          first_name: TEST_USER.firstName,
+          last_name: TEST_USER.lastName,
+          exp: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60, // 1 week
+        },
+        access_token: "test-access-token",
+        refresh_token: "test-refresh-token",
+        expires_at: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
+      };
+
+      req.login(testUserSession, (err) => {
+        if (err) {
+          console.error("Test login error:", err);
+          return res.status(500).json({ message: "Failed to create session" });
+        }
+        res.json({ success: true, user: TEST_USER });
+      });
+    } catch (error) {
+      console.error("Test login error:", error);
+      res.status(500).json({ message: "Test login failed" });
+    }
+  });
+
+  // Endpoint to get test credentials
+  app.get("/api/test-credentials", (req, res) => {
+    res.json({
+      userId: TEST_USER.id,
+      password: TEST_PASSWORD,
+      hint: "Use these credentials with the test login form",
+    });
+  });
 }
 
 export const isAuthenticated: RequestHandler = async (req, res, next) => {

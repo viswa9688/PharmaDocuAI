@@ -1,8 +1,52 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { FileText, Shield, CheckCircle, ClipboardCheck, LogIn } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { FileText, Shield, CheckCircle, ClipboardCheck, LogIn, FlaskConical, ChevronDown } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 export default function Landing() {
+  const { toast } = useToast();
+  const [isTestLoginOpen, setIsTestLoginOpen] = useState(false);
+  const [testUserId, setTestUserId] = useState("test-user-001");
+  const [testPassword, setTestPassword] = useState("testpass123");
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  const handleTestLogin = async () => {
+    setIsLoggingIn(true);
+    try {
+      const response = await fetch("/api/test-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: testUserId, password: testPassword }),
+      });
+
+      if (response.ok) {
+        toast({
+          title: "Test Login Successful",
+          description: "Redirecting to dashboard...",
+        });
+        window.location.href = "/";
+      } else {
+        const error = await response.json();
+        toast({
+          title: "Login Failed",
+          description: error.message || "Invalid credentials",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Login Error",
+        description: "Failed to connect to server",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <header className="border-b border-border">
@@ -35,6 +79,60 @@ export default function Landing() {
             >
               Get Started
             </Button>
+
+            <div className="mt-8">
+              <Collapsible open={isTestLoginOpen} onOpenChange={setIsTestLoginOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-2" data-testid="button-test-login-toggle">
+                    <FlaskConical className="h-4 w-4" />
+                    Test Login
+                    <ChevronDown className={`h-4 w-4 transition-transform ${isTestLoginOpen ? "rotate-180" : ""}`} />
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <Card className="mt-4 max-w-sm mx-auto text-left">
+                    <CardHeader className="pb-4">
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <FlaskConical className="h-5 w-5" />
+                        Test Login
+                      </CardTitle>
+                      <CardDescription>
+                        Use pre-filled test credentials for quick access
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="test-user-id">User ID</Label>
+                        <Input
+                          id="test-user-id"
+                          value={testUserId}
+                          onChange={(e) => setTestUserId(e.target.value)}
+                          data-testid="input-test-user-id"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="test-password">Password</Label>
+                        <Input
+                          id="test-password"
+                          type="password"
+                          value={testPassword}
+                          onChange={(e) => setTestPassword(e.target.value)}
+                          data-testid="input-test-password"
+                        />
+                      </div>
+                      <Button 
+                        className="w-full" 
+                        onClick={handleTestLogin}
+                        disabled={isLoggingIn}
+                        data-testid="button-test-login-submit"
+                      >
+                        {isLoggingIn ? "Logging in..." : "Login as Test User"}
+                      </Button>
+                    </CardContent>
+                  </Card>
+                </CollapsibleContent>
+              </Collapsible>
+            </div>
           </div>
         </section>
 
