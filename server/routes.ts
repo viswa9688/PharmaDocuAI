@@ -969,7 +969,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               id: r.id,
               status: r.status,
               comment: r.comment,
-              userId: r.userId,
+              resolverId: r.resolverId,
               createdAt: r.createdAt,
             })),
           };

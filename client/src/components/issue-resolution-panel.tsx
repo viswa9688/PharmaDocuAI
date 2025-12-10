@@ -46,8 +46,8 @@ import {
   Maximize2
 } from "lucide-react";
 import { format } from "date-fns";
-import type { QualityIssue, IssueResolution } from "@shared/schema";
-import { FullScreenImageDialog } from "./fullscreen-image-dialog";
+import type { QualityIssue, IssueResolution, IssueLocation } from "@shared/schema";
+import { FullScreenImageDialog, ImageWithOverlays, type HighlightOverlay } from "./fullscreen-image-dialog";
 
 type IssueWithResolutions = {
   issue: QualityIssue;
@@ -272,13 +272,46 @@ function IssueCard({ issueData, pageMap }: { issueData: IssueWithResolutions; pa
   const [selectedPageNumber, setSelectedPageNumber] = useState<number | null>(null);
   const { issue, resolutions } = issueData;
 
+  // Reset state when dialogs close
+  const handleImageDialogChange = (open: boolean) => {
+    setImageOpen(open);
+    if (!open) {
+      // Reset selection when dialog closes to prevent stale overlays
+      setSelectedPageId(null);
+      setSelectedPageNumber(null);
+    }
+  };
+
+  const handleFullscreenDialogChange = (open: boolean) => {
+    setFullscreenOpen(open);
+    if (!open) {
+      // Reset selection when fullscreen closes
+      setSelectedPageId(null);
+      setSelectedPageNumber(null);
+    }
+  };
+
   const handleOpenFullscreen = () => {
+    // Close preview without resetting state (we want to keep the same page selected for fullscreen)
     setImageOpen(false);
     setFullscreenOpen(true);
   };
 
   const pageNumbers = (issue.pageNumbers as number[]) || [];
   const hasPages = pageNumbers.length > 0;
+  
+  // Get highlight overlays for the selected page (recomputes when selectedPageNumber changes)
+  const locations = (issue.locations as IssueLocation[]) || [];
+  const overlaysForSelectedPage: HighlightOverlay[] = selectedPageNumber
+    ? locations
+        .filter(loc => loc.pageNumber === selectedPageNumber)
+        .map(loc => ({
+          xPct: loc.xPct,
+          yPct: loc.yPct,
+          widthPct: loc.widthPct,
+          heightPct: loc.heightPct,
+        }))
+    : [];
 
   const handleViewImage = (pageNumber: number) => {
     const pageInfo = pageMap[String(pageNumber)];
@@ -400,7 +433,7 @@ function IssueCard({ issueData, pageMap }: { issueData: IssueWithResolutions; pa
         </div>
       </AccordionContent>
 
-      <Dialog open={imageOpen} onOpenChange={setImageOpen}>
+      <Dialog open={imageOpen} onOpenChange={handleImageDialogChange}>
         <DialogContent className="max-w-4xl max-h-[90vh]">
           <DialogHeader>
             <div className="flex items-center justify-between">
@@ -419,15 +452,19 @@ function IssueCard({ issueData, pageMap }: { issueData: IssueWithResolutions; pa
             </div>
             <DialogDescription>
               Scanned page image where this issue was detected
+              {overlaysForSelectedPage.length > 0 && (
+                <span className="text-red-600 ml-2">(issue area highlighted in red)</span>
+              )}
             </DialogDescription>
           </DialogHeader>
           <ScrollArea className="max-h-[70vh]">
             {selectedPageId && (
-              <img
+              <ImageWithOverlays
                 src={`/api/pages/${selectedPageId}/image`}
                 alt={`Page ${selectedPageNumber}`}
-                className="w-full h-auto rounded-md border"
-                data-testid={`img-issue-page-${issue.id}`}
+                overlays={overlaysForSelectedPage}
+                className="rounded-md border"
+                testIdPrefix={`issue-page-${issue.id}`}
               />
             )}
           </ScrollArea>
@@ -440,8 +477,9 @@ function IssueCard({ issueData, pageMap }: { issueData: IssueWithResolutions; pa
           alt={`Page ${selectedPageNumber}`}
           title={`Page ${selectedPageNumber} - ${issue.issueType}`}
           open={fullscreenOpen}
-          onOpenChange={setFullscreenOpen}
+          onOpenChange={handleFullscreenDialogChange}
           testIdPrefix={`issue-${issue.id}`}
+          overlays={overlaysForSelectedPage}
         />
       )}
 

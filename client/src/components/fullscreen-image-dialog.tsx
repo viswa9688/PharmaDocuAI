@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -8,6 +8,14 @@ import { Button } from "@/components/ui/button";
 import { Maximize2, X, ZoomIn, ZoomOut, RotateCw } from "lucide-react";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 
+export interface HighlightOverlay {
+  xPct: number;      // X position as percentage of image width (0-100)
+  yPct: number;      // Y position as percentage of image height (0-100)
+  widthPct: number;  // Width as percentage of image width
+  heightPct: number; // Height as percentage of image height
+  color?: string;    // Optional custom color (default: red)
+}
+
 interface FullScreenImageDialogProps {
   src: string;
   alt: string;
@@ -15,6 +23,7 @@ interface FullScreenImageDialogProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   testIdPrefix?: string;
+  overlays?: HighlightOverlay[];
 }
 
 export function FullScreenImageDialog({
@@ -24,10 +33,12 @@ export function FullScreenImageDialog({
   open: controlledOpen,
   onOpenChange,
   testIdPrefix = "",
+  overlays = [],
 }: FullScreenImageDialogProps) {
   const [internalOpen, setInternalOpen] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
+  const imgRef = useRef<HTMLImageElement>(null);
 
   const isControlled = controlledOpen !== undefined;
   const open = isControlled ? controlledOpen : internalOpen;
@@ -110,16 +121,45 @@ export function FullScreenImageDialog({
           className="w-full h-full overflow-auto flex items-center justify-center bg-muted/50"
           onDoubleClick={handleReset}
         >
-          <img
-            src={src}
-            alt={alt}
-            className="max-w-none transition-transform duration-200"
+          <div 
+            className="relative transition-transform duration-200"
             style={{
               transform: `scale(${zoom}) rotate(${rotation}deg)`,
               transformOrigin: 'center center',
             }}
-            data-testid={`${prefix}img-fullscreen`}
-          />
+          >
+            <img
+              ref={imgRef}
+              src={src}
+              alt={alt}
+              className="max-w-none"
+              data-testid={`${prefix}img-fullscreen`}
+            />
+            {overlays.map((overlay, index) => {
+              // Clamp values to 0-100 range to prevent overflow
+              const x = Math.max(0, Math.min(100, overlay.xPct));
+              const y = Math.max(0, Math.min(100, overlay.yPct));
+              const w = Math.max(0, Math.min(100 - x, overlay.widthPct));
+              const h = Math.max(0, Math.min(100 - y, overlay.heightPct));
+              
+              return (
+                <div
+                  key={index}
+                  className="absolute pointer-events-none"
+                  style={{
+                    left: `${x}%`,
+                    top: `${y}%`,
+                    width: `${w}%`,
+                    height: `${h}%`,
+                    border: `3px solid ${overlay.color || '#ef4444'}`,
+                    backgroundColor: `${overlay.color || '#ef4444'}20`,
+                    borderRadius: '4px',
+                  }}
+                  data-testid={`${prefix}overlay-${index}`}
+                />
+              );
+            })}
+          </div>
         </div>
       </DialogContent>
     </Dialog>
@@ -143,5 +183,58 @@ export function FullScreenButton({ onClick, className = "", testId = "button-ful
     >
       <Maximize2 className="h-4 w-4" />
     </Button>
+  );
+}
+
+interface ImageWithOverlaysProps {
+  src: string;
+  alt: string;
+  overlays?: HighlightOverlay[];
+  className?: string;
+  testIdPrefix?: string;
+}
+
+export function ImageWithOverlays({
+  src,
+  alt,
+  overlays = [],
+  className = "",
+  testIdPrefix = "",
+}: ImageWithOverlaysProps) {
+  const prefix = testIdPrefix ? `${testIdPrefix}-` : "";
+
+  return (
+    <div className={`relative ${className}`}>
+      <img
+        src={src}
+        alt={alt}
+        className="w-full h-auto"
+        data-testid={`${prefix}img`}
+      />
+      {overlays.map((overlay, index) => {
+        // Clamp values to 0-100 range to prevent overflow
+        const x = Math.max(0, Math.min(100, overlay.xPct));
+        const y = Math.max(0, Math.min(100, overlay.yPct));
+        const w = Math.max(0, Math.min(100 - x, overlay.widthPct));
+        const h = Math.max(0, Math.min(100 - y, overlay.heightPct));
+        
+        return (
+          <div
+            key={index}
+            className="absolute pointer-events-none"
+            style={{
+              left: `${x}%`,
+              top: `${y}%`,
+              width: `${w}%`,
+              height: `${h}%`,
+              border: `3px solid ${overlay.color || '#ef4444'}`,
+              backgroundColor: `${overlay.color || '#ef4444'}20`,
+              borderRadius: '4px',
+            }}
+            data-testid={`${prefix}overlay-${index}`}
+          />
+        );
+      })}
+    </div>
   );
 }
