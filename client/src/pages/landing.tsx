@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { FileText, Shield, CheckCircle, ClipboardCheck, LogIn, FlaskConical, ChevronDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { queryClient } from "@/lib/queryClient";
 
 export default function Landing() {
   const { toast } = useToast();
@@ -20,6 +21,7 @@ export default function Landing() {
       const response = await fetch("/api/test-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ userId: testUserId, password: testPassword }),
       });
 
@@ -28,6 +30,9 @@ export default function Landing() {
           title: "Test Login Successful",
           description: "Redirecting to dashboard...",
         });
+        // Invalidate auth cache and force refetch
+        await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+        await queryClient.refetchQueries({ queryKey: ["/api/auth/user"] });
         window.location.href = "/";
       } else {
         const error = await response.json();

@@ -169,7 +169,15 @@ export async function setupAuth(app: Express) {
           console.error("Test login error:", err);
           return res.status(500).json({ message: "Failed to create session" });
         }
-        res.json({ success: true, user: TEST_USER });
+        // Explicitly save the session before sending response
+        req.session.save((saveErr: any) => {
+          if (saveErr) {
+            console.error("Session save error:", saveErr);
+            return res.status(500).json({ message: "Failed to save session" });
+          }
+          console.log("Test login successful for user:", TEST_USER.id);
+          res.json({ success: true, user: TEST_USER });
+        });
       });
     } catch (error) {
       console.error("Test login error:", error);
