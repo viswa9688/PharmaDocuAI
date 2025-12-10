@@ -3041,7 +3041,7 @@ export class ValidationEngine {
           expectedLocation: "Batch Details section (typically page 2)"
         }),
         source: {
-          pageNumber: batchBounds.sourcePageNumber || 2,
+          pageNumber: batchBounds.sourcePageNumber || 1,
           sectionType: "batch_details",
           fieldLabel: "Date & Time of Batch Commencement",
           boundingBox: { x: 0, y: 0, width: 0, height: 0 },
@@ -3072,7 +3072,7 @@ export class ValidationEngine {
           expectedLocation: "Batch Details section (typically page 2)"
         }),
         source: {
-          pageNumber: batchBounds.sourcePageNumber || 2,
+          pageNumber: batchBounds.sourcePageNumber || 1,
           sectionType: "batch_details",
           fieldLabel: "Date & Time of Batch Completion",
           boundingBox: { x: 0, y: 0, width: 0, height: 0 },
@@ -3105,7 +3105,7 @@ export class ValidationEngine {
           confidence: batchBounds.extractionConfidence
         }),
         source: {
-          pageNumber: batchBounds.sourcePageNumber || 2,
+          pageNumber: batchBounds.sourcePageNumber || 1,
           sectionType: "batch_details",
           fieldLabel: "Batch Dates",
           boundingBox: { x: 0, y: 0, width: 0, height: 0 },
@@ -3139,7 +3139,7 @@ export class ValidationEngine {
           note: "Dates shown are the reconciled values. Review original document to confirm."
         }),
         source: {
-          pageNumber: batchBounds.sourcePageNumber || 2,
+          pageNumber: batchBounds.sourcePageNumber || 1,
           sectionType: "batch_details",
           fieldLabel: "Batch Dates",
           boundingBox: { x: 0, y: 0, width: 0, height: 0 },

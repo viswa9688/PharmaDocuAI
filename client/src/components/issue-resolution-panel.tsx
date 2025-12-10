@@ -279,8 +279,17 @@ function IssueCard({ issueData, pageMap }: { issueData: IssueWithResolutions; pa
       setSelectedPageId(pageInfo.id);
       setImageOpen(true);
     } else {
-      setSelectedPageId(null);
-      setUnavailableOpen(true);
+      // Fallback to first available page if the referenced page doesn't exist
+      const firstAvailablePageKey = Object.keys(pageMap)[0];
+      if (firstAvailablePageKey) {
+        const fallbackPage = pageMap[firstAvailablePageKey];
+        setSelectedPageId(fallbackPage.id);
+        setSelectedPageNumber(fallbackPage.pageNumber);
+        setImageOpen(true);
+      } else {
+        setSelectedPageId(null);
+        setUnavailableOpen(true);
+      }
     }
   };
 
