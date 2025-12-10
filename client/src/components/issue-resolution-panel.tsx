@@ -317,33 +317,6 @@ function IssueCard({ issueData, pageMap }: { issueData: IssueWithResolutions; pa
             </div>
           </div>
 
-          {hasPages && (
-            <div className="bg-muted/50 p-3 rounded-md">
-              <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-                <Image className="h-4 w-4" />
-                View Page Image
-              </h4>
-              <div className="flex flex-wrap gap-2">
-                {pageNumbers.map((pageNum) => {
-                  const pageInfo = pageMap[String(pageNum)];
-                  if (!pageInfo) return null;
-                  return (
-                    <Button
-                      key={pageNum}
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleViewImage(pageNum)}
-                      data-testid={`button-view-page-${issue.id}-${pageNum}`}
-                    >
-                      <Eye className="h-3 w-3 mr-1" />
-                      Page {pageNum}
-                    </Button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
           {issue.resolutionComment && (
             <div className="bg-muted/50 p-3 rounded-md">
               <h4 className="text-sm font-medium mb-1 flex items-center gap-2">
@@ -354,7 +327,7 @@ function IssueCard({ issueData, pageMap }: { issueData: IssueWithResolutions; pa
             </div>
           )}
 
-          <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
             <Dialog open={resolveOpen} onOpenChange={setResolveOpen}>
               <DialogTrigger asChild>
                 <Button data-testid={`button-resolve-issue-${issue.id}`}>
@@ -372,8 +345,24 @@ function IssueCard({ issueData, pageMap }: { issueData: IssueWithResolutions; pa
               </DialogContent>
             </Dialog>
 
+            {hasPages && pageNumbers.map((pageNum) => {
+              const pageInfo = pageMap[String(pageNum)];
+              if (!pageInfo) return null;
+              return (
+                <Button
+                  key={pageNum}
+                  variant="outline"
+                  onClick={() => handleViewImage(pageNum)}
+                  data-testid={`button-view-page-${issue.id}-${pageNum}`}
+                >
+                  <Eye className="h-4 w-4 mr-1" />
+                  See Page {pageNum}
+                </Button>
+              );
+            })}
+
             {resolutions.length > 0 && (
-              <Badge variant="outline" className="text-xs">
+              <Badge variant="outline" className="text-xs ml-auto">
                 <History className="h-3 w-3 mr-1" />
                 {resolutions.length} resolution{resolutions.length !== 1 ? "s" : ""}
               </Badge>
