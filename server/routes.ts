@@ -826,8 +826,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 page.extractedText || ""
               );
               
-              // Run signature analysis
               const metadata = page.metadata as Record<string, any> || {};
+              
+              // Add visual anomaly alerts (data_integrity)
+              if (metadata.visualAnomalies && Array.isArray(metadata.visualAnomalies) && metadata.visualAnomalies.length > 0) {
+                const visualAlerts = validationEngine.createVisualAnomalyAlerts(metadata.visualAnomalies);
+                result.alerts.push(...visualAlerts);
+              }
+              
+              // Run signature analysis
               if (metadata.extraction) {
                 try {
                   const approvalAnalysis = signatureAnalyzer.analyze({
@@ -1044,8 +1051,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
             page.extractedText || ""
           );
           
-          // Run signature analysis
           const metadata = page.metadata as Record<string, any> || {};
+          
+          // Add visual anomaly alerts (data_integrity)
+          if (metadata.visualAnomalies && Array.isArray(metadata.visualAnomalies) && metadata.visualAnomalies.length > 0) {
+            const visualAlerts = validationEngine.createVisualAnomalyAlerts(metadata.visualAnomalies);
+            result.alerts.push(...visualAlerts);
+          }
+          
+          // Run signature analysis
           if (metadata.extraction) {
             try {
               const approvalAnalysis = signatureAnalyzer.analyze({
@@ -1099,7 +1113,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Collect all alerts
       const allAlerts: any[] = [];
       for (const pageResult of pageResults) {
+        console.log(`[Regenerate] Page ${pageResult.pageNumber} has ${pageResult.alerts.length} alerts`);
         for (const alert of pageResult.alerts) {
+          console.log(`[Regenerate]   - ${alert.category}: ${alert.title}`);
           allAlerts.push(alert);
         }
       }
@@ -1110,7 +1126,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const extractionAlerts = validationEngine.generateBatchDateExtractionAlerts(batchDateBounds);
       const summary = await validationEngine.validateDocument(documentId, pageResults);
       
+      console.log(`[Regenerate] Document-level alerts: crossPageIssues=${summary.crossPageIssues.length}, batchDateAlerts=${batchDateAlerts.length}, extractionAlerts=${extractionAlerts.length}`);
       allAlerts.push(...summary.crossPageIssues, ...batchDateAlerts, ...extractionAlerts);
+      console.log(`[Regenerate] Total alerts collected: ${allAlerts.length}`);
       
       // Build page dimensions map for normalizing bounding boxes
       const pageDimensionsMap: Record<number, { width: number; height: number }> = {};
