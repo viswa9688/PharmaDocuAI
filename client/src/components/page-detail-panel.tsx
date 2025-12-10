@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   Sheet,
   SheetContent,
@@ -7,13 +8,15 @@ import {
 } from "@/components/ui/sheet";
 import { ClassificationBadge } from "./classification-badge";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { FullScreenImageDialog } from "./fullscreen-image-dialog";
 import type { Page } from "@shared/schema";
 import { useParams } from "wouter";
-import { CheckSquare, Square, FileText, PenLine, FileSignature, LayoutGrid, CheckCircle2, XCircle, AlertCircle, ArrowRight } from "lucide-react";
+import { CheckSquare, Square, FileText, PenLine, FileSignature, LayoutGrid, CheckCircle2, XCircle, AlertCircle, ArrowRight, Maximize2 } from "lucide-react";
 
 interface PageDetailPanelProps {
   page: Page | null;
@@ -24,6 +27,7 @@ interface PageDetailPanelProps {
 export function PageDetailPanel({ page, open, onOpenChange }: PageDetailPanelProps) {
   const params = useParams();
   const documentId = params.id as string;
+  const [fullscreenOpen, setFullscreenOpen] = useState(false);
 
   if (!page) return null;
 
@@ -70,7 +74,19 @@ export function PageDetailPanel({ page, open, onOpenChange }: PageDetailPanelPro
         <div className="grid grid-cols-2 gap-6 p-6 h-[calc(100vh-10rem)]">
           {/* Left: Page Image */}
           <div className="space-y-4">
-            <h3 className="text-sm font-medium">Scanned Page</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium">Scanned Page</h3>
+              {imageUrl && (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => setFullscreenOpen(true)}
+                  data-testid="button-fullscreen-page"
+                >
+                  <Maximize2 className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
             <Card className="overflow-hidden">
               <ScrollArea className="h-[calc(100vh-14rem)]">
                 {imageUrl ? (
@@ -651,6 +667,17 @@ export function PageDetailPanel({ page, open, onOpenChange }: PageDetailPanelPro
             </div>
           </ScrollArea>
         </div>
+
+        {imageUrl && (
+          <FullScreenImageDialog
+            src={imageUrl}
+            alt={`Page ${page.pageNumber}`}
+            title={`Page ${page.pageNumber} - Full Screen`}
+            open={fullscreenOpen}
+            onOpenChange={setFullscreenOpen}
+            testIdPrefix="page-detail"
+          />
+        )}
       </SheetContent>
     </Sheet>
   );

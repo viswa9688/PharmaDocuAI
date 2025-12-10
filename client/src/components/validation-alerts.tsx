@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -6,6 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { FullScreenImageDialog } from "./fullscreen-image-dialog";
 import { 
   AlertTriangle, 
   AlertCircle, 
@@ -21,7 +23,8 @@ import {
   FileX2,
   Eye,
   PenLine,
-  ImageOff
+  ImageOff,
+  Maximize2
 } from "lucide-react";
 import type { 
   ValidationAlert, 
@@ -456,6 +459,8 @@ function DataIntegrityAlertCard({
   alert: ValidationAlert; 
   onPageClick?: (pageNumber: number) => void;
 }) {
+  const [fullscreenOpen, setFullscreenOpen] = useState(false);
+
   const severity = severityConfig[alert.severity];
   const SeverityIcon = severity.icon;
 
@@ -467,6 +472,10 @@ function DataIntegrityAlertCard({
   } catch {
     details = null;
   }
+
+  const thumbnailUrl = details?.thumbnailPath 
+    ? `/api/thumbnails/${details.thumbnailPath.split('/').pop()}`
+    : null;
 
   const anomalyTypeIcons: Record<string, typeof PenLine> = {
     strike_through: PenLine,
@@ -480,39 +489,53 @@ function DataIntegrityAlertCard({
   const AnomalyIcon = details?.anomalyType ? (anomalyTypeIcons[details.anomalyType] || Eye) : Eye;
 
   return (
-    <Card 
-      className="p-4 hover:bg-muted/50 transition-colors cursor-pointer border-l-4 border-l-orange-500"
-      onClick={() => onPageClick?.(alert.source.pageNumber)}
-      data-testid={`integrity-alert-card-${alert.id}`}
-    >
-      <div className="flex items-start gap-4">
-        {/* Thumbnail Section */}
-        <div className="flex-shrink-0">
-          {details?.thumbnailPath ? (
-            <div className="relative w-24 h-24 bg-muted rounded-md overflow-hidden border border-border">
-              <img 
-                src={`/api/thumbnails/${details.thumbnailPath.split('/').pop()}`}
-                alt="Visual anomaly"
-                className="w-full h-full object-cover"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = 'none';
-                  (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
-                }}
-              />
-              <div className="hidden absolute inset-0 flex items-center justify-center bg-muted">
+    <>
+      <Card 
+        className="p-4 hover:bg-muted/50 transition-colors cursor-pointer border-l-4 border-l-orange-500"
+        onClick={() => onPageClick?.(alert.source.pageNumber)}
+        data-testid={`integrity-alert-card-${alert.id}`}
+      >
+        <div className="flex items-start gap-4">
+          {/* Thumbnail Section */}
+          <div className="flex-shrink-0">
+            {thumbnailUrl ? (
+              <div className="relative w-24 h-24 bg-muted rounded-md overflow-hidden border border-border group">
+                <img 
+                  src={thumbnailUrl}
+                  alt="Visual anomaly"
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).style.display = 'none';
+                    (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
+                  }}
+                />
+                <div className="hidden absolute inset-0 flex items-center justify-center bg-muted">
+                  <AnomalyIcon className="h-8 w-8 text-muted-foreground" />
+                </div>
+                {/* Bounding box overlay indicator */}
+                {details?.boundingBox && (
+                  <div className="absolute inset-0 border-2 border-orange-500 pointer-events-none opacity-50" />
+                )}
+                {/* Fullscreen button overlay */}
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className="absolute top-1 right-1 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setFullscreenOpen(true);
+                  }}
+                  data-testid={`button-fullscreen-thumbnail-${alert.id}`}
+                >
+                  <Maximize2 className="h-3 w-3" />
+                </Button>
+              </div>
+            ) : (
+              <div className="w-24 h-24 bg-muted rounded-md flex items-center justify-center border border-border">
                 <AnomalyIcon className="h-8 w-8 text-muted-foreground" />
               </div>
-              {/* Bounding box overlay indicator */}
-              {details?.boundingBox && (
-                <div className="absolute inset-0 border-2 border-orange-500 pointer-events-none opacity-50" />
-              )}
-            </div>
-          ) : (
-            <div className="w-24 h-24 bg-muted rounded-md flex items-center justify-center border border-border">
-              <AnomalyIcon className="h-8 w-8 text-muted-foreground" />
-            </div>
-          )}
-        </div>
+            )}
+          </div>
 
         {/* Content Section */}
         <div className="flex-1 min-w-0">
@@ -571,6 +594,19 @@ function DataIntegrityAlertCard({
           )}
         </div>
       </div>
-    </Card>
+      </Card>
+
+      {/* Fullscreen Dialog for Thumbnail */}
+      {thumbnailUrl && (
+        <FullScreenImageDialog
+          src={thumbnailUrl}
+          alt="Visual anomaly - full screen"
+          title="Visual Anomaly - Full Screen"
+          open={fullscreenOpen}
+          onOpenChange={setFullscreenOpen}
+          testIdPrefix={`integrity-${alert.id}`}
+        />
+      )}
+    </>
   );
 }
