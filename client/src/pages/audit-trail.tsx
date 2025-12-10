@@ -474,7 +474,7 @@ export default function AuditTrail() {
       </Card>
 
       <Dialog open={!!selectedEvent} onOpenChange={(open) => !open && setSelectedEvent(null)}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {selectedEvent && (
@@ -569,11 +569,11 @@ export default function AuditTrail() {
                     Technical Details
                   </CollapsibleTrigger>
                   <CollapsibleContent>
-                    <ScrollArea className="h-[200px] mt-2">
-                      <pre className="text-xs bg-muted p-3 rounded-md overflow-x-auto">
+                    <div className="mt-2 max-h-[200px] overflow-auto rounded-md border">
+                      <pre className="text-xs bg-muted p-3 whitespace-pre-wrap break-all">
                         {formatMetadata(selectedEvent.metadata)}
                       </pre>
-                    </ScrollArea>
+                    </div>
                   </CollapsibleContent>
                 </Collapsible>
               )}
