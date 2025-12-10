@@ -67,7 +67,7 @@ type DocumentIssuesResponse = {
     approved: number;
     rejected: number;
   };
-  pageMap: Record<number, PageMapEntry>;
+  pageMap: Record<string, PageMapEntry>;
 };
 
 function getStatusBadge(status: string) {
@@ -261,7 +261,7 @@ function ResolutionTimeline({ resolutions }: { resolutions: IssueResolution[] })
   );
 }
 
-function IssueCard({ issueData, pageMap }: { issueData: IssueWithResolutions; pageMap: Record<number, PageMapEntry> }) {
+function IssueCard({ issueData, pageMap }: { issueData: IssueWithResolutions; pageMap: Record<string, PageMapEntry> }) {
   const [resolveOpen, setResolveOpen] = useState(false);
   const [imageOpen, setImageOpen] = useState(false);
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
@@ -269,10 +269,10 @@ function IssueCard({ issueData, pageMap }: { issueData: IssueWithResolutions; pa
   const { issue, resolutions } = issueData;
 
   const pageNumbers = (issue.pageNumbers as number[]) || [];
-  const hasPages = pageNumbers.length > 0 && pageNumbers.some(pn => pageMap[pn]);
+  const hasPages = pageNumbers.length > 0 && pageNumbers.some(pn => pageMap[String(pn)]);
 
   const handleViewImage = (pageNumber: number) => {
-    const pageInfo = pageMap[pageNumber];
+    const pageInfo = pageMap[String(pageNumber)];
     if (pageInfo) {
       setSelectedPageId(pageInfo.id);
       setSelectedPageNumber(pageNumber);
@@ -325,7 +325,7 @@ function IssueCard({ issueData, pageMap }: { issueData: IssueWithResolutions; pa
               </h4>
               <div className="flex flex-wrap gap-2">
                 {pageNumbers.map((pageNum) => {
-                  const pageInfo = pageMap[pageNum];
+                  const pageInfo = pageMap[String(pageNum)];
                   if (!pageInfo) return null;
                   return (
                     <Button
