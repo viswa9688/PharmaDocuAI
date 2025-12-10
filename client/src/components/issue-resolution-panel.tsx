@@ -621,13 +621,13 @@ export function IssueResolutionPanel({ documentId }: { documentId: string }) {
         </div>
       </CardHeader>
       <CardContent>
-        <ScrollArea className="max-h-[600px]">
+        <div className="max-h-[600px] overflow-y-auto pr-2">
           <Accordion type="multiple" className="space-y-2">
             {data.issues.map((issueData) => (
               <IssueCard key={issueData.issue.id} issueData={issueData} pageMap={data.pageMap || {}} />
             ))}
           </Accordion>
-        </ScrollArea>
+        </div>
       </CardContent>
     </Card>
   );
