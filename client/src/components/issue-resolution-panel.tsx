@@ -349,17 +349,16 @@ function IssueCard({ issueData, pageMap }: { issueData: IssueWithResolutions; pa
               </DialogContent>
             </Dialog>
 
-            {hasPages && pageNumbers.map((pageNum) => (
+            {hasPages && (
               <Button
-                key={pageNum}
                 variant="outline"
-                onClick={() => handleViewImage(pageNum)}
-                data-testid={`button-view-page-${issue.id}-${pageNum}`}
+                onClick={() => handleViewImage(pageNumbers[0])}
+                data-testid={`button-see-image-${issue.id}`}
               >
                 <Eye className="h-4 w-4 mr-1" />
-                See Page {pageNum}
+                See Image
               </Button>
-            ))}
+            )}
 
             {resolutions.length > 0 && (
               <Badge variant="outline" className="text-xs ml-auto">
