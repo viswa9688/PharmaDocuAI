@@ -893,6 +893,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           allAlerts.push(...summary.crossPageIssues, ...batchDateAlerts, ...extractionAlerts);
           
+          // Build page dimensions map for normalizing bounding boxes
+          const pageDimensionsMap: Record<number, { width: number; height: number }> = {};
+          for (const pageResult of pageResults) {
+            const pageNum = pageResult.pageNumber;
+            // Find the page in our pages array to get dimensions from metadata
+            const pageData = pages.find(p => p.pageNumber === pageNum);
+            if (pageData?.metadata?.extraction?.pageDimensions) {
+              pageDimensionsMap[pageNum] = pageData.metadata.extraction.pageDimensions;
+            } else {
+              // Default dimensions if not available
+              pageDimensionsMap[pageNum] = { width: 1700, height: 2200 };
+            }
+          }
+          
           // Create quality issues from alerts (only high/critical severity)
           const createdIssueIds = new Set<string>();
           for (const alert of allAlerts) {
@@ -907,6 +921,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
               pageNumbers.push(alert.source.pageNumber);
             }
             
+            // Normalize bounding box to percentage-based location
+            const locations: Array<{ pageNumber: number; xPct: number; yPct: number; widthPct: number; heightPct: number }> = [];
+            if (alert.source?.boundingBox && alert.source?.pageNumber) {
+              const bbox = alert.source.boundingBox;
+              const dims = pageDimensionsMap[alert.source.pageNumber] || { width: 1700, height: 2200 };
+              
+              // Only add location if bounding box has meaningful dimensions
+              if (bbox.width > 0 && bbox.height > 0) {
+                locations.push({
+                  pageNumber: alert.source.pageNumber,
+                  xPct: (bbox.x / dims.width) * 100,
+                  yPct: (bbox.y / dims.height) * 100,
+                  widthPct: (bbox.width / dims.width) * 100,
+                  heightPct: (bbox.height / dims.height) * 100,
+                });
+              }
+            }
+            
             // Map alert category to issue type
             const issueType = alert.category || "validation_error";
             const severity = alert.severity || "medium";
@@ -918,6 +950,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               severity,
               description: alert.message || alert.title || "Validation issue detected",
               pageNumbers,
+              locations,
             });
           }
           

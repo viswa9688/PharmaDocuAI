@@ -142,6 +142,15 @@ export const pages = pgTable("pages", {
 export const issueResolutionStatuses = ["pending", "approved", "rejected"] as const;
 export type IssueResolutionStatus = typeof issueResolutionStatuses[number];
 
+// Issue location for highlighting on page images
+export type IssueLocation = {
+  pageNumber: number;
+  xPct: number;      // X position as percentage of page width (0-100)
+  yPct: number;      // Y position as percentage of page height (0-100)
+  widthPct: number;  // Width as percentage of page width
+  heightPct: number; // Height as percentage of page height
+};
+
 // Quality control issues
 export const qualityIssues = pgTable("quality_issues", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -150,6 +159,7 @@ export const qualityIssues = pgTable("quality_issues", {
   severity: text("severity").notNull(), // low, medium, high
   description: text("description").notNull(),
   pageNumbers: jsonb("page_numbers").$type<number[]>().default([]),
+  locations: jsonb("locations").$type<IssueLocation[]>().default([]), // Bounding box locations for highlighting
   resolved: boolean("resolved").default(false),
   resolutionStatus: text("resolution_status").default("pending").notNull(), // pending, approved, rejected
   resolvedBy: varchar("resolved_by").references(() => users.id, { onDelete: "set null" }),
