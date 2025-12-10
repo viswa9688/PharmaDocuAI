@@ -446,6 +446,7 @@ function IssueCard({ issueData, pageMap }: { issueData: IssueWithResolutions; pa
                 variant="outline"
                 size="icon"
                 onClick={handleOpenFullscreen}
+                className="relative z-10"
                 data-testid={`button-fullscreen-${issue.id}`}
               >
                 <Maximize2 className="h-4 w-4" />
