@@ -953,11 +953,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const doc = await storage.getDocument(documentId);
       
+      // Get pages for mapping page numbers to page IDs (for image display in UI)
+      const pages = await storage.getPagesByDocument(documentId);
+      const pageMap = pages.reduce((acc, page) => {
+        acc[page.pageNumber] = { id: page.id, pageNumber: page.pageNumber };
+        return acc;
+      }, {} as Record<number, { id: string; pageNumber: number }>);
+      
       res.json({
         documentId,
         filename: doc?.filename || 'Unknown',
         issues: issuesWithResolutions,
         counts,
+        pageMap,
       });
     } catch (error: any) {
       console.error("Get issues error:", error);
@@ -1426,42 +1434,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ISSUE RESOLUTION ENDPOINTS
   // ==========================================
 
-  // Get all issues for a document with resolution history and counts
-  app.get("/api/documents/:id/issues", async (req, res) => {
-    try {
-      const documentId = req.params.id;
-      
-      const doc = await storage.getDocument(documentId);
-      if (!doc) {
-        return res.status(404).json({ error: "Document not found" });
-      }
-      
-      const issuesWithResolutions = await storage.getIssuesWithResolutions(documentId);
-      
-      // Calculate counts
-      const counts = {
-        total: issuesWithResolutions.length,
-        pending: 0,
-        approved: 0,
-        rejected: 0,
-      };
-      
-      issuesWithResolutions.forEach(({ issue }) => {
-        if (issue.resolutionStatus === "approved") counts.approved++;
-        else if (issue.resolutionStatus === "rejected") counts.rejected++;
-        else counts.pending++;
-      });
-      
-      res.json({
-        documentId,
-        filename: doc.filename,
-        issues: issuesWithResolutions,
-        counts,
-      });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
+  // Note: GET /api/documents/:id/issues is defined earlier in the document API section
+  // with automatic sync from validation alerts and pageMap for image display
 
   // Resolve an issue (approve or reject) with mandatory comment
   app.post("/api/issues/:issueId/resolve", isAuthenticated, async (req: any, res) => {

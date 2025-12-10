@@ -40,7 +40,9 @@ import {
   MessageSquare,
   User,
   Calendar,
-  History
+  History,
+  Image,
+  Eye
 } from "lucide-react";
 import { format } from "date-fns";
 import type { QualityIssue, IssueResolution } from "@shared/schema";
@@ -48,6 +50,11 @@ import type { QualityIssue, IssueResolution } from "@shared/schema";
 type IssueWithResolutions = {
   issue: QualityIssue;
   resolutions: IssueResolution[];
+};
+
+type PageMapEntry = {
+  id: string;
+  pageNumber: number;
 };
 
 type DocumentIssuesResponse = {
@@ -60,6 +67,7 @@ type DocumentIssuesResponse = {
     approved: number;
     rejected: number;
   };
+  pageMap: Record<number, PageMapEntry>;
 };
 
 function getStatusBadge(status: string) {
@@ -253,9 +261,24 @@ function ResolutionTimeline({ resolutions }: { resolutions: IssueResolution[] })
   );
 }
 
-function IssueCard({ issueData }: { issueData: IssueWithResolutions }) {
+function IssueCard({ issueData, pageMap }: { issueData: IssueWithResolutions; pageMap: Record<number, PageMapEntry> }) {
   const [resolveOpen, setResolveOpen] = useState(false);
+  const [imageOpen, setImageOpen] = useState(false);
+  const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
+  const [selectedPageNumber, setSelectedPageNumber] = useState<number | null>(null);
   const { issue, resolutions } = issueData;
+
+  const pageNumbers = (issue.pageNumbers as number[]) || [];
+  const hasPages = pageNumbers.length > 0 && pageNumbers.some(pn => pageMap[pn]);
+
+  const handleViewImage = (pageNumber: number) => {
+    const pageInfo = pageMap[pageNumber];
+    if (pageInfo) {
+      setSelectedPageId(pageInfo.id);
+      setSelectedPageNumber(pageNumber);
+      setImageOpen(true);
+    }
+  };
 
   return (
     <AccordionItem value={issue.id} className="border rounded-lg px-4">
@@ -269,9 +292,9 @@ function IssueCard({ issueData }: { issueData: IssueWithResolutions }) {
               <Badge variant="outline" className="text-xs">
                 {issue.severity}
               </Badge>
-              {issue.pageNumbers && issue.pageNumbers.length > 0 && (
+              {pageNumbers.length > 0 && (
                 <span className="text-xs text-muted-foreground">
-                  Pages: {(issue.pageNumbers as number[]).join(", ")}
+                  Pages: {pageNumbers.join(", ")}
                 </span>
               )}
             </div>
@@ -294,6 +317,33 @@ function IssueCard({ issueData }: { issueData: IssueWithResolutions }) {
             </div>
           </div>
 
+          {hasPages && (
+            <div className="bg-muted/50 p-3 rounded-md">
+              <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
+                <Image className="h-4 w-4" />
+                View Page Image
+              </h4>
+              <div className="flex flex-wrap gap-2">
+                {pageNumbers.map((pageNum) => {
+                  const pageInfo = pageMap[pageNum];
+                  if (!pageInfo) return null;
+                  return (
+                    <Button
+                      key={pageNum}
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleViewImage(pageNum)}
+                      data-testid={`button-view-page-${issue.id}-${pageNum}`}
+                    >
+                      <Eye className="h-3 w-3 mr-1" />
+                      Page {pageNum}
+                    </Button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {issue.resolutionComment && (
             <div className="bg-muted/50 p-3 rounded-md">
               <h4 className="text-sm font-medium mb-1 flex items-center gap-2">
@@ -304,7 +354,7 @@ function IssueCard({ issueData }: { issueData: IssueWithResolutions }) {
             </div>
           )}
 
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
             <Dialog open={resolveOpen} onOpenChange={setResolveOpen}>
               <DialogTrigger asChild>
                 <Button data-testid={`button-resolve-issue-${issue.id}`}>
@@ -344,6 +394,30 @@ function IssueCard({ issueData }: { issueData: IssueWithResolutions }) {
           )}
         </div>
       </AccordionContent>
+
+      <Dialog open={imageOpen} onOpenChange={setImageOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Image className="h-5 w-5" />
+              Page {selectedPageNumber} - {issue.issueType}
+            </DialogTitle>
+            <DialogDescription>
+              Scanned page image where this issue was detected
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[70vh]">
+            {selectedPageId && (
+              <img
+                src={`/api/pages/${selectedPageId}/image`}
+                alt={`Page ${selectedPageNumber}`}
+                className="w-full h-auto rounded-md border"
+                data-testid={`img-issue-page-${issue.id}`}
+              />
+            )}
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
     </AccordionItem>
   );
 }
@@ -422,7 +496,7 @@ export function IssueResolutionPanel({ documentId }: { documentId: string }) {
         <ScrollArea className="max-h-[600px]">
           <Accordion type="multiple" className="space-y-2">
             {data.issues.map((issueData) => (
-              <IssueCard key={issueData.issue.id} issueData={issueData} />
+              <IssueCard key={issueData.issue.id} issueData={issueData} pageMap={data.pageMap || {}} />
             ))}
           </Accordion>
         </ScrollArea>
