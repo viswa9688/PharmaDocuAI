@@ -264,19 +264,23 @@ function ResolutionTimeline({ resolutions }: { resolutions: IssueResolution[] })
 function IssueCard({ issueData, pageMap }: { issueData: IssueWithResolutions; pageMap: Record<string, PageMapEntry> }) {
   const [resolveOpen, setResolveOpen] = useState(false);
   const [imageOpen, setImageOpen] = useState(false);
+  const [unavailableOpen, setUnavailableOpen] = useState(false);
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
   const [selectedPageNumber, setSelectedPageNumber] = useState<number | null>(null);
   const { issue, resolutions } = issueData;
 
   const pageNumbers = (issue.pageNumbers as number[]) || [];
-  const hasPages = pageNumbers.length > 0 && pageNumbers.some(pn => pageMap[String(pn)]);
+  const hasPages = pageNumbers.length > 0;
 
   const handleViewImage = (pageNumber: number) => {
     const pageInfo = pageMap[String(pageNumber)];
+    setSelectedPageNumber(pageNumber);
     if (pageInfo) {
       setSelectedPageId(pageInfo.id);
-      setSelectedPageNumber(pageNumber);
       setImageOpen(true);
+    } else {
+      setSelectedPageId(null);
+      setUnavailableOpen(true);
     }
   };
 
@@ -345,21 +349,17 @@ function IssueCard({ issueData, pageMap }: { issueData: IssueWithResolutions; pa
               </DialogContent>
             </Dialog>
 
-            {hasPages && pageNumbers.map((pageNum) => {
-              const pageInfo = pageMap[String(pageNum)];
-              if (!pageInfo) return null;
-              return (
-                <Button
-                  key={pageNum}
-                  variant="outline"
-                  onClick={() => handleViewImage(pageNum)}
-                  data-testid={`button-view-page-${issue.id}-${pageNum}`}
-                >
-                  <Eye className="h-4 w-4 mr-1" />
-                  See Page {pageNum}
-                </Button>
-              );
-            })}
+            {hasPages && pageNumbers.map((pageNum) => (
+              <Button
+                key={pageNum}
+                variant="outline"
+                onClick={() => handleViewImage(pageNum)}
+                data-testid={`button-view-page-${issue.id}-${pageNum}`}
+              >
+                <Eye className="h-4 w-4 mr-1" />
+                See Page {pageNum}
+              </Button>
+            ))}
 
             {resolutions.length > 0 && (
               <Badge variant="outline" className="text-xs ml-auto">
@@ -405,6 +405,34 @@ function IssueCard({ issueData, pageMap }: { issueData: IssueWithResolutions; pa
               />
             )}
           </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={unavailableOpen} onOpenChange={setUnavailableOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Page Image Not Available
+            </DialogTitle>
+            <DialogDescription>
+              The image for page {selectedPageNumber} is not available. This may occur when:
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 text-sm text-muted-foreground">
+            <p>• The page was not processed during document upload</p>
+            <p>• The PDF-to-image conversion failed for this page</p>
+            <p>• The page number referenced by this issue doesn't exist in the document</p>
+          </div>
+          <div className="flex justify-end mt-4">
+            <Button 
+              variant="outline" 
+              onClick={() => setUnavailableOpen(false)}
+              data-testid={`button-close-unavailable-${issue.id}`}
+            >
+              Close
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </AccordionItem>
