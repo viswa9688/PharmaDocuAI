@@ -45,9 +45,159 @@ import {
   Signature,
   ThumbsUp,
   ThumbsDown,
+  ChevronDown,
+  ChevronRight,
+  Info,
 } from "lucide-react";
 import { formatDistance, format } from "date-fns";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import type { ProcessingEvent, User } from "@shared/schema";
+
+function generateEventDescription(eventType: string, metadata: Record<string, any> | null, status: string): string {
+  const m = metadata || {};
+  
+  switch (eventType) {
+    case "document_upload":
+      const filename = m.filename || "a document";
+      const pageCount = m.totalPages || m.pageCount;
+      if (pageCount) {
+        return `Uploaded "${filename}" with ${pageCount} page${pageCount !== 1 ? 's' : ''}`;
+      }
+      return `Uploaded "${filename}"`;
+      
+    case "document_delete":
+      const deletedFilename = m.filename || m.deletedDocumentId?.slice(0, 8) || "document";
+      return `Deleted document "${deletedFilename}"`;
+      
+    case "image_conversion":
+      const convertedPages = m.pagesConverted || m.totalPages;
+      if (convertedPages) {
+        return `Converted ${convertedPages} page${convertedPages !== 1 ? 's' : ''} to images for viewing`;
+      }
+      return "Converted PDF pages to images";
+      
+    case "document_ai_extraction":
+      if (status === "failed") {
+        return "AI extraction failed - document could not be processed";
+      }
+      const extractedPages = m.pagesProcessed || m.totalPages;
+      if (extractedPages) {
+        return `AI extracted text and data from ${extractedPages} page${extractedPages !== 1 ? 's' : ''}`;
+      }
+      return "AI extracted text and structured data from document";
+      
+    case "page_classification":
+      const classifiedPages = m.pagesClassified || m.totalPages;
+      const sectionTypes = m.sectionTypes;
+      if (sectionTypes && Array.isArray(sectionTypes)) {
+        return `Classified ${classifiedPages || 'pages'} into sections: ${sectionTypes.slice(0, 3).join(', ')}${sectionTypes.length > 3 ? '...' : ''}`;
+      }
+      if (classifiedPages) {
+        return `Classified ${classifiedPages} page${classifiedPages !== 1 ? 's' : ''} into document sections`;
+      }
+      return "Classified pages into document sections";
+      
+    case "validation":
+      const issueCount = m.issuesFound || m.alertCount || m.totalAlerts;
+      if (issueCount !== undefined) {
+        if (issueCount === 0) {
+          return "Validation completed - no issues detected";
+        }
+        return `Validation found ${issueCount} issue${issueCount !== 1 ? 's' : ''} requiring review`;
+      }
+      return "Ran validation checks on document";
+      
+    case "signature_analysis":
+      const sigCount = m.signaturesFound || m.signatureCount;
+      const missingSigs = m.missingSignatures;
+      if (missingSigs) {
+        return `Found ${missingSigs} missing signature${missingSigs !== 1 ? 's' : ''} requiring attention`;
+      }
+      if (sigCount !== undefined) {
+        return `Analyzed ${sigCount} signature field${sigCount !== 1 ? 's' : ''}`;
+      }
+      return "Analyzed signature fields on document";
+      
+    case "visual_analysis":
+      const anomalyCount = m.anomaliesFound || m.anomalyCount;
+      if (anomalyCount !== undefined) {
+        if (anomalyCount === 0) {
+          return "Visual analysis completed - no data integrity issues detected";
+        }
+        return `Detected ${anomalyCount} visual anomal${anomalyCount !== 1 ? 'ies' : 'y'} (strike-throughs, corrections, etc.)`;
+      }
+      return "Analyzed document for visual anomalies and corrections";
+      
+    case "processing_complete":
+      const processedPages = m.pagesProcessed || m.totalPages;
+      const usedFallback = m.usedFallback;
+      let desc = "Document processing completed successfully";
+      if (processedPages) {
+        desc = `Successfully processed ${processedPages} page${processedPages !== 1 ? 's' : ''}`;
+      }
+      if (usedFallback) {
+        desc += " (used fallback processing)";
+      }
+      return desc;
+      
+    case "processing_failed":
+      const errorReason = m.reason || m.error;
+      if (errorReason) {
+        return `Processing failed: ${errorReason}`;
+      }
+      return "Document processing failed";
+      
+    case "document_viewed":
+      return "User viewed the document";
+      
+    case "document_approved":
+      const approvalComment = m.comment;
+      if (approvalComment) {
+        return `Approved document with comment: "${approvalComment.slice(0, 50)}${approvalComment.length > 50 ? '...' : ''}"`;
+      }
+      return "Approved the document for release";
+      
+    case "document_unapproved":
+      return "Removed approval status from document";
+      
+    case "issue_approved":
+      const issueType = m.issueType || "issue";
+      const issueDesc = m.issueDescription?.slice(0, 40) || "";
+      const approveComment = m.comment;
+      let approveMsg = `Approved ${issueType} issue`;
+      if (issueDesc) {
+        approveMsg += `: "${issueDesc}${m.issueDescription?.length > 40 ? '...' : ''}"`;
+      }
+      if (approveComment) {
+        approveMsg += ` - "${approveComment.slice(0, 30)}${approveComment.length > 30 ? '...' : ''}"`;
+      }
+      return approveMsg;
+      
+    case "issue_rejected":
+      const rejIssueType = m.issueType || "issue";
+      const rejIssueDesc = m.issueDescription?.slice(0, 40) || "";
+      const rejectComment = m.comment;
+      let rejectMsg = `Rejected ${rejIssueType} issue`;
+      if (rejIssueDesc) {
+        rejectMsg += `: "${rejIssueDesc}${m.issueDescription?.length > 40 ? '...' : ''}"`;
+      }
+      if (rejectComment) {
+        rejectMsg += ` - "${rejectComment.slice(0, 30)}${rejectComment.length > 30 ? '...' : ''}"`;
+      }
+      return rejectMsg;
+      
+    case "alert_acknowledged":
+      const alertType = m.alertType || "alert";
+      return `Acknowledged ${alertType}`;
+      
+    default:
+      return `${eventType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())} event occurred`;
+  }
+}
 
 interface EventWithUser extends ProcessingEvent {
   user?: User | null;
@@ -345,6 +495,18 @@ export default function AuditTrail() {
           </DialogHeader>
           {selectedEvent && (
             <div className="space-y-4">
+              <div className="bg-muted/50 p-4 rounded-lg border">
+                <div className="flex items-start gap-3">
+                  <Info className="h-5 w-5 text-primary mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground mb-1">What happened</p>
+                    <p className="text-base" data-testid="text-event-description">
+                      {generateEventDescription(selectedEvent.eventType, selectedEvent.metadata, selectedEvent.status)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Event ID</label>
@@ -401,14 +563,19 @@ export default function AuditTrail() {
               )}
 
               {selectedEvent.metadata && Object.keys(selectedEvent.metadata).length > 0 && (
-                <div>
-                  <label className="text-sm font-medium text-muted-foreground">Metadata</label>
-                  <ScrollArea className="h-[200px] mt-1">
-                    <pre className="text-xs bg-muted p-3 rounded-md overflow-x-auto">
-                      {formatMetadata(selectedEvent.metadata)}
-                    </pre>
-                  </ScrollArea>
-                </div>
+                <Collapsible>
+                  <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors" data-testid="button-toggle-technical-details">
+                    <ChevronRight className="h-4 w-4 transition-transform duration-200 [[data-state=open]>&]:rotate-90" />
+                    Technical Details
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <ScrollArea className="h-[200px] mt-2">
+                      <pre className="text-xs bg-muted p-3 rounded-md overflow-x-auto">
+                        {formatMetadata(selectedEvent.metadata)}
+                      </pre>
+                    </ScrollArea>
+                  </CollapsibleContent>
+                </Collapsible>
               )}
             </div>
           )}
