@@ -1583,6 +1583,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Serve page images by page ID (used by issue resolution panel)
+  app.get("/api/pages/:pageId/image", async (req, res) => {
+    try {
+      const { pageId } = req.params;
+      const fs = await import('fs');
+      
+      // Get page by ID
+      const page = await storage.getPage(pageId);
+      if (!page) {
+        res.setHeader('Content-Type', 'image/svg+xml');
+        res.setHeader('X-Image-Status', 'page-not-found');
+        return res.send(generatePlaceholderSVG(0, 'Page not found'));
+      }
+      
+      if (!page.imagePath) {
+        res.setHeader('Content-Type', 'image/svg+xml');
+        res.setHeader('X-Image-Status', 'missing-path');
+        return res.send(generatePlaceholderSVG(page.pageNumber, 'Image path not found'));
+      }
+
+      // Sanitize and validate image path to prevent directory traversal
+      const uploadsDir = path.join(process.cwd(), "uploads");
+      const requestedPath = path.join(uploadsDir, page.imagePath);
+      const normalizedPath = path.normalize(requestedPath);
+      
+      // Ensure the resolved path is within uploads directory
+      const relativePath = path.relative(uploadsDir, normalizedPath);
+      if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+        console.error("Directory traversal attempt detected:", { 
+          imagePath: page.imagePath, 
+          relativePath,
+          pageId 
+        });
+        return res.status(403).json({ error: "Invalid image path" });
+      }
+
+      // Check if file actually exists, return placeholder if not
+      if (!fs.existsSync(normalizedPath)) {
+        res.setHeader('Content-Type', 'image/svg+xml');
+        res.setHeader('X-Image-Status', 'file-missing');
+        return res.send(generatePlaceholderSVG(page.pageNumber, 'Image file not available'));
+      }
+
+      res.sendFile(normalizedPath);
+    } catch (error: any) {
+      console.error("Error serving page image by ID:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Serve visual anomaly thumbnails
   app.get("/api/thumbnails/:filename", async (req, res) => {
     try {
