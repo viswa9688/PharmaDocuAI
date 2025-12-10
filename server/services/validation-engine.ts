@@ -355,6 +355,9 @@ export class ValidationEngine {
     const unit = fieldValue ? this.extractUnit(fieldValue) : null;
     const valueType = fieldValue ? this.determineValueType(fieldValue) : "text";
 
+    // Use valueBoundingBox first (where the value is), then nameBoundingBox, then generic boundingBox
+    const boundingBox = field.valueBoundingBox || field.nameBoundingBox || field.boundingBox || { x: 0, y: 0, width: 0, height: 0 };
+
     return {
       id: this.generateValueId(),
       rawValue: fieldValue,
@@ -365,7 +368,7 @@ export class ValidationEngine {
         pageNumber,
         sectionType,
         fieldLabel: field.fieldName,
-        boundingBox: field.boundingBox || { x: 0, y: 0, width: 0, height: 0 },
+        boundingBox,
         surroundingContext: field.fieldName
       },
       confidence: field.confidence || 0.8,

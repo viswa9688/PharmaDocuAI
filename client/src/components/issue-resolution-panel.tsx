@@ -43,7 +43,8 @@ import {
   History,
   Image,
   Eye,
-  Maximize2
+  Maximize2,
+  RefreshCw
 } from "lucide-react";
 import { format } from "date-fns";
 import type { QualityIssue, IssueResolution, IssueLocation } from "@shared/schema";
@@ -515,8 +516,30 @@ function IssueCard({ issueData, pageMap }: { issueData: IssueWithResolutions; pa
 }
 
 export function IssueResolutionPanel({ documentId }: { documentId: string }) {
-  const { data, isLoading } = useQuery<DocumentIssuesResponse>({
+  const { toast } = useToast();
+  const { data, isLoading, refetch } = useQuery<DocumentIssuesResponse>({
     queryKey: ["/api/documents", documentId, "issues"],
+  });
+
+  const regenerateMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", `/api/documents/${documentId}/issues/regenerate`);
+      return response.json();
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/documents", documentId, "issues"] });
+      toast({
+        title: "Issues Refreshed",
+        description: `Regenerated ${result.regeneratedCount} issues with updated location data.`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        variant: "destructive",
+        title: "Refresh Failed",
+        description: error.message || "Failed to regenerate issues",
+      });
+    },
   });
 
   if (isLoading) {
@@ -561,10 +584,23 @@ export function IssueResolutionPanel({ documentId }: { documentId: string }) {
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <CardTitle className="flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5" />
-            Issues & Resolutions
-          </CardTitle>
+          <div className="flex items-center gap-2">
+            <CardTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5" />
+              Issues & Resolutions
+            </CardTitle>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => regenerateMutation.mutate()}
+              disabled={regenerateMutation.isPending}
+              data-testid="button-refresh-issues"
+              title="Refresh issues to update location highlighting data"
+            >
+              <RefreshCw className={`h-4 w-4 mr-1 ${regenerateMutation.isPending ? 'animate-spin' : ''}`} />
+              {regenerateMutation.isPending ? 'Refreshing...' : 'Refresh'}
+            </Button>
+          </div>
           <div className="flex gap-2 flex-wrap">
             <Badge variant="secondary" data-testid="badge-issues-total">
               Total: {data.counts.total}

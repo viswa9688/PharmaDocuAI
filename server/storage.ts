@@ -29,6 +29,7 @@ export interface IStorage {
   getIssuesByDocument(documentId: string): Promise<QualityIssue[]>;
   getQualityIssue(id: string): Promise<QualityIssue | undefined>;
   updateQualityIssue(id: string, updates: Partial<QualityIssue>): Promise<QualityIssue | undefined>;
+  deleteIssuesByDocument(documentId: string): Promise<number>;
 
   // Issue Resolutions
   createIssueResolution(resolution: InsertIssueResolution): Promise<IssueResolution>;
@@ -66,6 +67,9 @@ export class MemStorage implements IStorage {
       processedPages: 0,
       errorMessage: null,
       batchDateBounds: null,
+      isApproved: false,
+      approvedBy: null,
+      approvedAt: null,
     };
     this.documents.set(id, doc);
     return doc;
@@ -110,6 +114,7 @@ export class MemStorage implements IStorage {
       extractedText: insertPage.extractedText || null,
       issues: (insertPage.issues as string[]) || null,
       metadata: insertPage.metadata || null,
+      imagePath: insertPage.imagePath || null,
       createdAt: new Date(),
     };
     this.pages.set(id, page);
@@ -133,8 +138,13 @@ export class MemStorage implements IStorage {
       ...insertIssue,
       id,
       pageNumbers: (insertIssue.pageNumbers as number[]) || null,
+      locations: (insertIssue.locations as any[]) || null,
       resolved: false,
       createdAt: new Date(),
+      resolvedAt: null,
+      resolvedBy: null,
+      resolutionStatus: "pending",
+      resolutionComment: null,
     };
     this.qualityIssues.set(id, issue);
     return issue;
@@ -156,6 +166,22 @@ export class MemStorage implements IStorage {
     const updated = { ...issue, ...updates };
     this.qualityIssues.set(id, updated);
     return updated;
+  }
+
+  async deleteIssuesByDocument(documentId: string): Promise<number> {
+    const issueIds = Array.from(this.qualityIssues.values())
+      .filter(issue => issue.documentId === documentId)
+      .map(issue => issue.id);
+    
+    issueIds.forEach(id => this.qualityIssues.delete(id));
+    
+    // Also delete associated resolutions
+    const resolutionIds = Array.from(this.issueResolutions.values())
+      .filter(r => r.documentId === documentId)
+      .map(r => r.id);
+    resolutionIds.forEach(id => this.issueResolutions.delete(id));
+    
+    return issueIds.length;
   }
 
   // Issue Resolutions

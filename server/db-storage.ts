@@ -224,6 +224,21 @@ export class DBStorage implements IStorage {
     return updated;
   }
 
+  async deleteIssuesByDocument(documentId: string): Promise<number> {
+    // First delete associated resolutions
+    await db
+      .delete(issueResolutions)
+      .where(eq(issueResolutions.documentId, documentId));
+    
+    // Then delete the issues
+    const result = await db
+      .delete(qualityIssues)
+      .where(eq(qualityIssues.documentId, documentId))
+      .returning();
+    
+    return result.length;
+  }
+
   async createIssueResolution(resolution: InsertIssueResolution): Promise<IssueResolution> {
     const [created] = await db.insert(issueResolutions).values(resolution).returning();
     return created;

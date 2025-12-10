@@ -842,6 +842,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   if (approvalAnalysis.signatureFields) {
                     for (const field of approvalAnalysis.signatureFields) {
                       if (!field.isSigned) {
+                        // Use the field's bounding box if available
+                        const fieldBoundingBox = field.boundingBox || { x: 0, y: 0, width: 0, height: 0 };
                         result.alerts.push({
                           id: `sig-missing-${page.pageNumber}-${field.fieldLabel}`,
                           category: "missing_value",
@@ -853,7 +855,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                             pageNumber: page.pageNumber,
                             sectionType: page.classification || "unknown",
                             fieldLabel: field.fieldLabel,
-                            boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+                            boundingBox: fieldBoundingBox,
                             surroundingContext: "",
                           },
                           relatedValues: [],
@@ -1002,6 +1004,163 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error("Get issues error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Regenerate issues for a document (clears existing issues and regenerates with fresh location data)
+  app.post("/api/documents/:id/issues/regenerate", async (req, res) => {
+    try {
+      const documentId = req.params.id;
+      
+      const doc = await storage.getDocument(documentId);
+      if (!doc) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+      
+      // Delete existing issues
+      const deletedCount = await storage.deleteIssuesByDocument(documentId);
+      console.log(`Deleted ${deletedCount} existing issues for document ${documentId}`);
+      
+      // Now the GET endpoint will regenerate issues when called
+      // We trigger it by fetching issues again
+      const pages = await storage.getPagesByDocument(documentId);
+      
+      if (pages.length === 0) {
+        return res.json({ 
+          message: "No pages to process", 
+          deletedCount,
+          regeneratedCount: 0
+        });
+      }
+      
+      // Run validation to get alerts (same logic as GET endpoint)
+      const pageResults = await Promise.all(
+        pages.map(async (page) => {
+          const result = await validationEngine.validatePage(
+            page.pageNumber,
+            page.metadata || {},
+            page.classification,
+            page.extractedText || ""
+          );
+          
+          // Run signature analysis
+          const metadata = page.metadata as Record<string, any> || {};
+          if (metadata.extraction) {
+            try {
+              const approvalAnalysis = signatureAnalyzer.analyze({
+                tables: metadata.extraction.tables,
+                handwrittenRegions: metadata.extraction.handwrittenRegions,
+                signatures: metadata.extraction.signatures,
+                formFields: metadata.extraction.formFields,
+                textBlocks: metadata.extraction.textBlocks || metadata.layoutAnalysis?.textBlocks,
+              });
+              
+              // Add missing signature alerts with bounding boxes
+              if (approvalAnalysis.signatureFields) {
+                for (const field of approvalAnalysis.signatureFields) {
+                  if (!field.isSigned) {
+                    const fieldBoundingBox = field.boundingBox || { x: 0, y: 0, width: 0, height: 0 };
+                    result.alerts.push({
+                      id: `sig-missing-${page.pageNumber}-${field.fieldLabel}`,
+                      category: "missing_value",
+                      severity: "high",
+                      title: "Missing Signature",
+                      message: `Signature field "${field.fieldLabel}" is empty on Page ${page.pageNumber}`,
+                      details: `Field: ${field.fieldLabel}`,
+                      source: {
+                        pageNumber: page.pageNumber,
+                        sectionType: page.classification || "unknown",
+                        fieldLabel: field.fieldLabel,
+                        boundingBox: fieldBoundingBox,
+                        surroundingContext: "",
+                      },
+                      relatedValues: [],
+                      suggestedAction: "Obtain signature for this field",
+                      ruleId: "signature_required",
+                      formulaId: null,
+                      isResolved: false,
+                      resolvedBy: null,
+                      resolvedAt: null,
+                      resolution: null,
+                    });
+                  }
+                }
+              }
+            } catch (err) {
+              console.error(`Signature analysis failed for page ${page.pageNumber}:`, err);
+            }
+          }
+          
+          return result;
+        })
+      );
+      
+      // Collect all alerts
+      const allAlerts: any[] = [];
+      for (const pageResult of pageResults) {
+        for (const alert of pageResult.alerts) {
+          allAlerts.push(alert);
+        }
+      }
+      
+      // Add document-level alerts
+      const batchDateBounds = validationEngine.extractBatchDateBounds(pageResults);
+      const batchDateAlerts = validationEngine.validateDatesAgainstBatchWindow(pageResults, batchDateBounds);
+      const extractionAlerts = validationEngine.generateBatchDateExtractionAlerts(batchDateBounds);
+      const summary = await validationEngine.validateDocument(documentId, pageResults);
+      
+      allAlerts.push(...summary.crossPageIssues, ...batchDateAlerts, ...extractionAlerts);
+      
+      // Build page dimensions map for normalizing bounding boxes
+      const pageDimensionsMap: Record<number, { width: number; height: number }> = {};
+      for (const pageResult of pageResults) {
+        const pageNum = pageResult.pageNumber;
+        const pageData = pages.find(p => p.pageNumber === pageNum);
+        if (pageData?.metadata?.extraction?.pageDimensions) {
+          pageDimensionsMap[pageNum] = pageData.metadata.extraction.pageDimensions;
+        } else {
+          pageDimensionsMap[pageNum] = { width: 1700, height: 2200 };
+        }
+      }
+      
+      // Create quality issues from alerts with normalized locations
+      let regeneratedCount = 0;
+      for (const alert of allAlerts) {
+        const locations: Array<{ pageNumber: number; xPct: number; yPct: number; widthPct: number; heightPct: number }> = [];
+        if (alert.source?.boundingBox && alert.source?.pageNumber) {
+          const bbox = alert.source.boundingBox;
+          const dims = pageDimensionsMap[alert.source.pageNumber] || { width: 1700, height: 2200 };
+          
+          if (bbox.width > 0 && bbox.height > 0) {
+            locations.push({
+              pageNumber: alert.source.pageNumber,
+              xPct: (bbox.x / dims.width) * 100,
+              yPct: (bbox.y / dims.height) * 100,
+              widthPct: (bbox.width / dims.width) * 100,
+              heightPct: (bbox.height / dims.height) * 100,
+            });
+          }
+        }
+        
+        await storage.createQualityIssue({
+          documentId,
+          issueType: alert.category,
+          severity: alert.severity,
+          description: `${alert.title}: ${alert.message}`,
+          pageNumbers: alert.source?.pageNumber ? [alert.source.pageNumber] : [],
+          locations,
+        });
+        regeneratedCount++;
+      }
+      
+      res.json({
+        message: "Issues regenerated successfully",
+        deletedCount,
+        regeneratedCount,
+      });
+    } catch (error: any) {
+      console.error("Regenerate issues error:", error);
       res.status(500).json({ error: error.message });
     }
   });
