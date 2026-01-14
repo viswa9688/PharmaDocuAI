@@ -23,9 +23,13 @@ export interface VerificationResult {
 export class BMRVerificationService {
   private mpcIdentifiers = [
     "master product card",
+    "master copy",
+    "master document",
     "mpc",
     "product specification",
-    "master specification"
+    "master specification",
+    "master record",
+    "master batch record"
   ];
   
   private bmrIdentifiers = [
