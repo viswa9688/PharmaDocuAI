@@ -1104,13 +1104,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const pageTexts: Array<{ pageNumber: number; text: string }> = [];
 
-      // Helper function to extract text using pdfjs-dist
+      // Helper function to extract text using pdfjs-dist legacy build
       const extractWithPdfJs = async (): Promise<void> => {
         try {
-          const pdfjsLib = await import('pdfjs-dist');
+          // Use legacy build for Node.js environments
+          const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
           
           // Load PDF document from buffer
-          const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) });
+          const loadingTask = pdfjsLib.getDocument({ 
+            data: new Uint8Array(pdfBuffer),
+            useSystemFonts: true 
+          });
           const pdfDoc = await loadingTask.promise;
           
           console.log(`[BMR-VERIFY] pdfjs-dist loaded ${pdfDoc.numPages} pages`);
