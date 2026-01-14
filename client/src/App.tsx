@@ -13,6 +13,7 @@ import DocumentViewer from "@/pages/document-viewer";
 import Processing from "@/pages/processing";
 import Settings from "@/pages/settings";
 import BMRVerification from "@/pages/bmr-verification";
+import RawMaterialVerification from "@/pages/raw-material-verification";
 
 function Router() {
   return (
@@ -23,6 +24,7 @@ function Router() {
       <Route path="/processing" component={Processing} />
       <Route path="/settings" component={Settings} />
       <Route path="/bmr-verification" component={BMRVerification} />
+      <Route path="/raw-material" component={RawMaterialVerification} />
       <Route component={NotFound} />
     </Switch>
   );

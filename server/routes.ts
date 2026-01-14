@@ -1284,10 +1284,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (documentAI) {
         try {
           const document = await documentAI.processDocument(pdfBuffer);
-          tables = documentAI.extractTables(document);
-          formFields = documentAI.extractFormFields(document);
-          rawText = documentAI.extractFullText(document);
-          console.log(`[RAW-MATERIAL] Document AI extracted ${tables.length} tables, ${formFields.length} form fields`);
+          const totalPages = documentAI.getTotalPages(document);
+          
+          // Extract tables and form fields from all pages
+          for (let i = 0; i < totalPages; i++) {
+            const pageData = documentAI.extractPageData(document, i);
+            if (pageData) {
+              tables.push(...(pageData.tables || []));
+              formFields.push(...(pageData.formFields || []));
+              rawText += (pageData.extractedText || "") + "\n";
+            }
+          }
+          console.log(`[RAW-MATERIAL] Document AI extracted ${tables.length} tables, ${formFields.length} form fields from ${totalPages} pages`);
         } catch (err: any) {
           console.warn(`[RAW-MATERIAL] Document AI failed: ${err.message}`);
         }
@@ -1388,6 +1396,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         mpcNumber,
         bmrNumber: bmrNumber || null,
         filename: req.file.originalname,
+        fileSize: req.file.size,
         status: "processing",
       });
 
@@ -1400,10 +1409,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (documentAI) {
         try {
           const document = await documentAI.processDocument(pdfBuffer);
-          tables = documentAI.extractTables(document);
-          formFields = documentAI.extractFormFields(document);
-          rawText = documentAI.extractFullText(document);
-          console.log(`[RAW-MATERIAL-VERIFY] Document AI extracted ${tables.length} tables`);
+          const totalPages = documentAI.getTotalPages(document);
+          
+          // Extract tables and form fields from all pages
+          for (let i = 0; i < totalPages; i++) {
+            const pageData = documentAI.extractPageData(document, i);
+            if (pageData) {
+              tables.push(...(pageData.tables || []));
+              formFields.push(...(pageData.formFields || []));
+              rawText += (pageData.extractedText || "") + "\n";
+            }
+          }
+          console.log(`[RAW-MATERIAL-VERIFY] Document AI extracted ${tables.length} tables from ${totalPages} pages`);
         } catch (err: any) {
           console.warn(`[RAW-MATERIAL-VERIFY] Document AI failed: ${err.message}`);
           await storage.updateRawMaterialVerification(verification.id, {

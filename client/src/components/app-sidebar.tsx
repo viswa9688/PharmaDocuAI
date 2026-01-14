@@ -9,7 +9,7 @@ import {
   SidebarMenuItem,
   SidebarHeader,
 } from "@/components/ui/sidebar";
-import { Upload, FileText, FolderOpen, Settings, FileCheck } from "lucide-react";
+import { Upload, FileText, FolderOpen, Settings, FileCheck, Scale } from "lucide-react";
 import { Link, useLocation } from "wouter";
 
 const menuItems = [
@@ -32,6 +32,11 @@ const menuItems = [
     title: "BMR Verification",
     url: "/bmr-verification",
     icon: FileCheck,
+  },
+  {
+    title: "Raw Material Verification",
+    url: "/raw-material",
+    icon: Scale,
   },
   {
     title: "Settings",
