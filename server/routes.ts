@@ -1269,20 +1269,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "No file uploaded" });
       }
 
-      // Create verification record
-      const verification = await storage.createRawMaterialVerification({
-        mpcNumber: "auto-detected",
-        bmrNumber: null,
-        filename: req.file.originalname,
-        fileSize: req.file.size,
-        status: "processing",
-      });
-
       if (!documentAI) {
-        await storage.updateRawMaterialVerification(verification.id, {
-          status: "failed",
-          errorMessage: "Document AI is not configured"
-        });
         return res.status(500).json({ error: "Document AI is not configured for document processing" });
       }
 
@@ -1292,10 +1279,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const totalPages = documentAI.getTotalPages(document);
 
       if (totalPages < 2) {
-        await storage.updateRawMaterialVerification(verification.id, {
-          status: "failed",
-          errorMessage: "PDF must contain at least 2 pages (limits page and verification page)"
-        });
         return res.status(400).json({ 
           error: "PDF must contain at least 2 pages",
           details: "Upload a PDF with one page containing material limits and another with actual values"
@@ -1313,7 +1296,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      console.log(`[RAW-MATERIAL] Processed ${totalPages} pages`);
+      // Combine all text for MPC/BMR number extraction
+      const allText = pagesData.map(p => p.rawText).join("\n");
+      
+      // Extract MPC/BMR numbers from document text
+      const mpcMatch = allText.match(/MPC[-\s]?(\d{4}[-/]?\d{3,})/i) || 
+                       allText.match(/Master\s*Product\s*Card\s*[:#]?\s*(\S+)/i);
+      const bmrMatch = allText.match(/BMR[-\s]?(\d{4}[-/]?\d{3,})/i) ||
+                       allText.match(/Batch\s*(?:Manufacturing\s*)?Record\s*[:#]?\s*(\S+)/i);
+      
+      const mpcNumber = mpcMatch ? mpcMatch[1] || mpcMatch[0] : req.file.originalname.replace(/\.[^.]+$/, "");
+      const bmrNumber = bmrMatch ? bmrMatch[1] || bmrMatch[0] : null;
+
+      console.log(`[RAW-MATERIAL] Processed ${totalPages} pages, MPC: ${mpcNumber}, BMR: ${bmrNumber}`);
+
+      // Create verification record
+      const verification = await storage.createRawMaterialVerification({
+        mpcNumber,
+        bmrNumber,
+        filename: req.file.originalname,
+        fileSize: req.file.size,
+        status: "processing",
+      });
 
       // Classify pages to identify limits vs verification
       const classifications = rawMaterialVerificationService.classifyPages(
@@ -1321,13 +1325,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
 
       const limitsPage = classifications.find(c => c.pageType === "limits");
-      const verificationPage = classifications.find(c => c.pageType === "verification");
+      const verificationPageClassified = classifications.find(c => c.pageType === "verification");
 
       if (!limitsPage) {
         // Default: first page is limits
         classifications[0].pageType = "limits";
       }
-      if (!verificationPage && totalPages > 1) {
+      if (!verificationPageClassified && totalPages > 1) {
         // Default: second page is verification
         const nonLimitsPage = classifications.find(c => c.pageType !== "limits");
         if (nonLimitsPage) nonLimitsPage.pageType = "verification";
