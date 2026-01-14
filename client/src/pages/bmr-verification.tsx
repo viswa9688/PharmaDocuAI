@@ -42,6 +42,11 @@ export default function BMRVerificationPage() {
   const { data: selectedResult, isLoading: loadingResult } = useQuery<VerificationResult>({
     queryKey: ["/api/bmr-verification", selectedVerificationId, "result"],
     enabled: !!selectedVerificationId,
+    staleTime: 0,
+    refetchInterval: (query) => {
+      const status = query.state.data?.verification?.status;
+      return status === "processing" || status === "pending" ? 2000 : false;
+    },
   });
 
   const deleteMutation = useMutation({
