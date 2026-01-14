@@ -11,6 +11,7 @@ import { SignatureAnalyzer } from "./services/signature-analyzer";
 import { ValidationEngine } from "./services/validation-engine";
 import { VisualAnalyzer } from "./services/visual-analyzer";
 import { bmrVerificationService } from "./services/bmr-verification";
+import { rawMaterialVerificationService } from "./services/raw-material-verification";
 
 // Use PostgreSQL database storage for persistence
 const storage = new DBStorage();
@@ -1256,6 +1257,254 @@ export async function registerRoutes(app: Express): Promise<Server> {
       throw error;
     }
   }
+
+  // ==========================================
+  // Raw Material Verification Endpoints
+  // ==========================================
+
+  // Upload BoM/MPC document to extract material limits
+  app.post("/api/raw-material/limits/upload", upload.single("file"), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+
+      const { mpcNumber, productName } = req.body;
+      if (!mpcNumber) {
+        return res.status(400).json({ error: "MPC number is required" });
+      }
+
+      // Process the document to extract material limits
+      const pdfBuffer = req.file.buffer;
+      let tables: any[] = [];
+      let formFields: any[] = [];
+      let rawText = "";
+
+      // Use Document AI if available
+      if (documentAI) {
+        try {
+          const document = await documentAI.processDocument(pdfBuffer);
+          tables = documentAI.extractTables(document);
+          formFields = documentAI.extractFormFields(document);
+          rawText = documentAI.extractFullText(document);
+          console.log(`[RAW-MATERIAL] Document AI extracted ${tables.length} tables, ${formFields.length} form fields`);
+        } catch (err: any) {
+          console.warn(`[RAW-MATERIAL] Document AI failed: ${err.message}`);
+        }
+      }
+
+      // Extract material limits from tables
+      const extractedMaterials = rawMaterialVerificationService.extractMaterialLimitsFromTable(
+        tables,
+        formFields,
+        rawText
+      );
+
+      if (extractedMaterials.length === 0) {
+        return res.status(400).json({ 
+          error: "No material limits could be extracted from the document",
+          details: "Please ensure the document contains a table with material codes, quantities, and tolerances"
+        });
+      }
+
+      // Delete existing limits for this MPC and insert new ones
+      await storage.deleteRawMaterialLimitsByMpc(mpcNumber);
+      const insertRecords = rawMaterialVerificationService.convertLimitsToInsertRecords(
+        extractedMaterials,
+        mpcNumber,
+        productName
+      );
+      const savedLimits = await storage.createRawMaterialLimits(insertRecords);
+
+      res.json({
+        success: true,
+        mpcNumber,
+        productName,
+        materialsExtracted: savedLimits.length,
+        materials: savedLimits
+      });
+    } catch (error: any) {
+      console.error("Raw material limits upload error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get all stored material limits
+  app.get("/api/raw-material/limits", async (_req, res) => {
+    try {
+      const limits = await storage.getAllRawMaterialLimits();
+      res.json(limits);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get material limits by MPC number
+  app.get("/api/raw-material/limits/:mpcNumber", async (req, res) => {
+    try {
+      const limits = await storage.getRawMaterialLimitsByMpc(req.params.mpcNumber);
+      res.json(limits);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Delete material limits by MPC number
+  app.delete("/api/raw-material/limits/:mpcNumber", async (req, res) => {
+    try {
+      const deleted = await storage.deleteRawMaterialLimitsByMpc(req.params.mpcNumber);
+      if (!deleted) {
+        return res.status(404).json({ error: "No limits found for this MPC" });
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Upload batch record to verify material quantities against stored limits
+  app.post("/api/raw-material/verify", upload.single("file"), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+
+      const { mpcNumber, bmrNumber } = req.body;
+      if (!mpcNumber) {
+        return res.status(400).json({ error: "MPC number is required to verify against stored limits" });
+      }
+
+      // Get the stored limits for this MPC
+      const limits = await storage.getRawMaterialLimitsByMpc(mpcNumber);
+      if (limits.length === 0) {
+        return res.status(400).json({ 
+          error: "No material limits found for this MPC",
+          details: "Please upload the BoM/MPC document first to establish limits"
+        });
+      }
+
+      // Create verification record
+      const verification = await storage.createRawMaterialVerification({
+        mpcNumber,
+        bmrNumber: bmrNumber || null,
+        filename: req.file.originalname,
+        status: "processing",
+      });
+
+      // Process the batch record document
+      const pdfBuffer = req.file.buffer;
+      let tables: any[] = [];
+      let formFields: any[] = [];
+      let rawText = "";
+
+      if (documentAI) {
+        try {
+          const document = await documentAI.processDocument(pdfBuffer);
+          tables = documentAI.extractTables(document);
+          formFields = documentAI.extractFormFields(document);
+          rawText = documentAI.extractFullText(document);
+          console.log(`[RAW-MATERIAL-VERIFY] Document AI extracted ${tables.length} tables`);
+        } catch (err: any) {
+          console.warn(`[RAW-MATERIAL-VERIFY] Document AI failed: ${err.message}`);
+          await storage.updateRawMaterialVerification(verification.id, {
+            status: "failed",
+            errorMessage: `Document processing failed: ${err.message}`
+          });
+          return res.status(500).json({ error: `Document processing failed: ${err.message}` });
+        }
+      } else {
+        await storage.updateRawMaterialVerification(verification.id, {
+          status: "failed",
+          errorMessage: "Document AI is not configured"
+        });
+        return res.status(500).json({ error: "Document AI is not configured for document processing" });
+      }
+
+      // Extract actual quantities from the batch record
+      const actualQuantities = rawMaterialVerificationService.extractActualQuantitiesFromTable(
+        tables,
+        formFields,
+        rawText
+      );
+
+      // Validate quantities against limits
+      const validationResults = rawMaterialVerificationService.validateMaterialQuantities(
+        limits,
+        actualQuantities
+      );
+
+      // Store results
+      const resultRecords = rawMaterialVerificationService.convertResultsToInsertRecords(
+        validationResults,
+        verification.id
+      );
+      await storage.createRawMaterialResults(resultRecords);
+
+      // Calculate summary
+      const materialsWithinLimits = validationResults.filter(r => r.withinLimits === true).length;
+      const materialsOutOfLimits = validationResults.filter(r => r.withinLimits === false).length;
+
+      // Update verification record
+      await storage.updateRawMaterialVerification(verification.id, {
+        status: "completed",
+        completedAt: new Date(),
+        totalMaterials: validationResults.length,
+        materialsWithinLimits,
+        materialsOutOfLimits,
+      });
+
+      res.json({
+        verificationId: verification.id,
+        mpcNumber,
+        bmrNumber,
+        status: "completed",
+        totalMaterials: validationResults.length,
+        materialsWithinLimits,
+        materialsOutOfLimits,
+        results: validationResults
+      });
+    } catch (error: any) {
+      console.error("Raw material verification error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get all raw material verifications
+  app.get("/api/raw-material/verifications", async (_req, res) => {
+    try {
+      const verifications = await storage.getAllRawMaterialVerifications();
+      res.json(verifications);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get raw material verification by ID with results
+  app.get("/api/raw-material/verifications/:id", async (req, res) => {
+    try {
+      const verification = await storage.getRawMaterialVerification(req.params.id);
+      if (!verification) {
+        return res.status(404).json({ error: "Verification not found" });
+      }
+      const results = await storage.getRawMaterialResultsByVerification(req.params.id);
+      res.json({ verification, results });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Delete raw material verification
+  app.delete("/api/raw-material/verifications/:id", async (req, res) => {
+    try {
+      const deleted = await storage.deleteRawMaterialVerification(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ error: "Verification not found" });
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
 
   const httpServer = createServer(app);
   return httpServer;
