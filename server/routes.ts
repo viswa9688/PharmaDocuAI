@@ -944,10 +944,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await storage.updateDocument(documentId, { processedPages: pageNumber });
         }
 
-        // Update document with fallback status
-        await storage.updateDocument(documentId, { 
-          errorMessage: usedFallback ? `Demo Mode: ${fallbackReason}` : undefined 
-        });
+        // Update document with fallback status if applicable
+        if (usedFallback && fallbackReason) {
+          await storage.updateDocument(documentId, { 
+            errorMessage: `Demo Mode: ${fallbackReason}` 
+          });
+        }
       }
 
       // Detect quality issues
