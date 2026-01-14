@@ -318,3 +318,74 @@ export type DocumentSummary = {
   issueCount: number;
   avgConfidence: number;
 };
+
+// ==========================================
+// BMR VERIFICATION TYPES
+// ==========================================
+
+// Status of BMR verification
+export const bmrVerificationStatuses = ["pending", "processing", "completed", "failed"] as const;
+export type BMRVerificationStatus = typeof bmrVerificationStatuses[number];
+
+// Discrepancy severity levels
+export const discrepancySeverities = ["critical", "major", "minor"] as const;
+export type DiscrepancySeverity = typeof discrepancySeverities[number];
+
+// BMR Verification sessions table
+export const bmrVerifications = pgTable("bmr_verifications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  filename: text("filename").notNull(),
+  fileSize: integer("file_size").notNull(),
+  status: text("status").notNull().default("pending"),
+  uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
+  completedAt: timestamp("completed_at"),
+  totalDiscrepancies: integer("total_discrepancies").default(0),
+  masterProductCardPage: integer("master_product_card_page"),
+  bmrPage: integer("bmr_page"),
+  errorMessage: text("error_message"),
+  extractedMpcData: jsonb("extracted_mpc_data").$type<Record<string, any>>(),
+  extractedBmrData: jsonb("extracted_bmr_data").$type<Record<string, any>>(),
+});
+
+// Individual discrepancies found during verification
+export const bmrDiscrepancies = pgTable("bmr_discrepancies", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  verificationId: varchar("verification_id").notNull().references(() => bmrVerifications.id, { onDelete: "cascade" }),
+  fieldName: text("field_name").notNull(),
+  mpcValue: text("mpc_value"),
+  bmrValue: text("bmr_value"),
+  severity: text("severity").notNull(),
+  description: text("description").notNull(),
+  section: text("section"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Insert schemas for BMR verification
+export const insertBmrVerificationSchema = createInsertSchema(bmrVerifications).omit({
+  id: true,
+  uploadedAt: true,
+  completedAt: true,
+  totalDiscrepancies: true,
+  errorMessage: true,
+  extractedMpcData: true,
+  extractedBmrData: true,
+});
+
+export const insertBmrDiscrepancySchema = createInsertSchema(bmrDiscrepancies).omit({
+  id: true,
+  createdAt: true,
+});
+
+// Types for BMR verification
+export type BMRVerification = typeof bmrVerifications.$inferSelect;
+export type InsertBMRVerification = z.infer<typeof insertBmrVerificationSchema>;
+export type BMRDiscrepancy = typeof bmrDiscrepancies.$inferSelect;
+export type InsertBMRDiscrepancy = z.infer<typeof insertBmrDiscrepancySchema>;
+
+// Verification result summary for frontend
+export type BMRVerificationResult = {
+  verification: BMRVerification;
+  discrepancies: BMRDiscrepancy[];
+  matchedFields: string[];
+  totalFieldsCompared: number;
+};

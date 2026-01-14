@@ -10,6 +10,7 @@ import { LayoutAnalyzer } from "./services/layout-analyzer";
 import { SignatureAnalyzer } from "./services/signature-analyzer";
 import { ValidationEngine } from "./services/validation-engine";
 import { VisualAnalyzer } from "./services/visual-analyzer";
+import { bmrVerificationService } from "./services/bmr-verification";
 
 // Use PostgreSQL database storage for persistence
 const storage = new DBStorage();
@@ -966,6 +967,216 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Processing error:", error);
       await storage.updateDocument(documentId, {
+        status: "failed",
+        errorMessage: error.message,
+      });
+      throw error;
+    }
+  }
+
+  // ==========================================
+  // BMR VERIFICATION ROUTES
+  // ==========================================
+
+  // Upload PDF and run BMR verification
+  app.post("/api/bmr-verification/upload", upload.single("file"), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+
+      if (req.file.mimetype !== "application/pdf") {
+        return res.status(400).json({ error: "Only PDF files are supported" });
+      }
+
+      // Create verification record
+      const verification = await storage.createBMRVerification({
+        filename: req.file.originalname,
+        fileSize: req.file.size,
+        status: "pending",
+      });
+
+      // Start verification process asynchronously
+      processBMRVerification(verification.id, req.file.buffer).catch(error => {
+        console.error("Error processing BMR verification:", error);
+        storage.updateBMRVerification(verification.id, {
+          status: "failed",
+          errorMessage: error.message,
+        });
+      });
+
+      res.json(verification);
+    } catch (error: any) {
+      console.error("BMR verification upload error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get all BMR verifications
+  app.get("/api/bmr-verification", async (_req, res) => {
+    try {
+      const verifications = await storage.getAllBMRVerifications();
+      res.json(verifications);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get BMR verification by ID
+  app.get("/api/bmr-verification/:id", async (req, res) => {
+    try {
+      const verification = await storage.getBMRVerification(req.params.id);
+      if (!verification) {
+        return res.status(404).json({ error: "Verification not found" });
+      }
+      res.json(verification);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get BMR verification result with discrepancies
+  app.get("/api/bmr-verification/:id/result", async (req, res) => {
+    try {
+      const verification = await storage.getBMRVerification(req.params.id);
+      if (!verification) {
+        return res.status(404).json({ error: "Verification not found" });
+      }
+
+      const discrepancies = await storage.getDiscrepanciesByVerification(req.params.id);
+      
+      const allFields = [
+        "product_name", "product_code", "batch_size", "unit_of_measure",
+        "expiry_date", "shelf_life", "physical_description", "dimensions_weight",
+        "active_ingredients", "storage_conditions", "manufacturing_location",
+        "equipment_required", "quality_control_checkpoints"
+      ];
+      
+      const mpcData = verification.extractedMpcData || {};
+      const bmrData = verification.extractedBmrData || {};
+      
+      const fieldsWithData = allFields.filter(field => 
+        mpcData[field] || bmrData[field]
+      );
+      
+      const discrepancyFields = discrepancies.map(d => d.fieldName);
+      const matchedFields = fieldsWithData.filter(field => 
+        !discrepancyFields.includes(field)
+      );
+      
+      const totalFieldsCompared = fieldsWithData.length;
+
+      res.json({
+        verification,
+        discrepancies,
+        matchedFields,
+        totalFieldsCompared,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Delete BMR verification
+  app.delete("/api/bmr-verification/:id", async (req, res) => {
+    try {
+      const deleted = await storage.deleteBMRVerification(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ error: "Verification not found" });
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Process BMR verification function
+  async function processBMRVerification(verificationId: string, pdfBuffer: Buffer) {
+    try {
+      await storage.updateBMRVerification(verificationId, { status: "processing" });
+
+      // Extract text from each page using PDF processor
+      const pageCount = await pdfProcessor.getPageCount(pdfBuffer);
+      const pageTexts: Array<{ pageNumber: number; text: string }> = [];
+
+      // Use Document AI if available, otherwise use fallback text extraction
+      if (documentAI) {
+        try {
+          const document = await documentAI.processDocument(pdfBuffer);
+          const totalPages = documentAI.getTotalPages(document);
+          
+          for (let i = 0; i < totalPages; i++) {
+            const pageText = documentAI.extractPageText(document, i);
+            pageTexts.push({ pageNumber: i + 1, text: pageText });
+          }
+        } catch (docAIError: any) {
+          console.warn("Document AI failed, using fallback:", docAIError.message);
+          // Fallback: use basic text extraction
+          for (let i = 0; i < pageCount; i++) {
+            pageTexts.push({ 
+              pageNumber: i + 1, 
+              text: `Page ${i + 1} content - Document AI not configured` 
+            });
+          }
+        }
+      } else {
+        // No Document AI, use demo mode
+        for (let i = 0; i < pageCount; i++) {
+          pageTexts.push({ 
+            pageNumber: i + 1, 
+            text: `Page ${i + 1} content - Document AI not configured` 
+          });
+        }
+      }
+
+      // Run verification
+      const result = await bmrVerificationService.processAndVerify(pageTexts);
+
+      if (result.error) {
+        await storage.updateBMRVerification(verificationId, {
+          status: "failed",
+          errorMessage: result.error,
+          masterProductCardPage: result.mpcPageNumber,
+          bmrPage: result.bmrPageNumber,
+        });
+        return;
+      }
+
+      if (!result.verificationResult) {
+        await storage.updateBMRVerification(verificationId, {
+          status: "failed",
+          errorMessage: "Verification could not be completed",
+        });
+        return;
+      }
+
+      // Store discrepancies
+      for (const discrepancy of result.verificationResult.discrepancies) {
+        await storage.createBMRDiscrepancy({
+          verificationId,
+          fieldName: discrepancy.fieldName,
+          mpcValue: discrepancy.mpcValue,
+          bmrValue: discrepancy.bmrValue,
+          severity: discrepancy.severity,
+          description: discrepancy.description,
+          section: discrepancy.section,
+        });
+      }
+
+      // Update verification with results
+      await storage.updateBMRVerification(verificationId, {
+        status: "completed",
+        completedAt: new Date(),
+        totalDiscrepancies: result.verificationResult.discrepancies.length,
+        masterProductCardPage: result.mpcPageNumber,
+        bmrPage: result.bmrPageNumber,
+        extractedMpcData: result.verificationResult.mpcData,
+        extractedBmrData: result.verificationResult.bmrData,
+      });
+
+    } catch (error: any) {
+      console.error("BMR verification processing error:", error);
+      await storage.updateBMRVerification(verificationId, {
         status: "failed",
         errorMessage: error.message,
       });

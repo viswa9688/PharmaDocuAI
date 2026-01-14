@@ -45,3 +45,6 @@ waitForPort = 5000
 GOOGLE_CLOUD_PROJECT_ID = "pharmacydocuscanner"
 GOOGLE_CLOUD_LOCATION = "us"
 GOOGLE_DOCUMENT_AI_PROCESSOR_ID = "870b7b61f99f718f"
+
+[agent]
+expertMode = true

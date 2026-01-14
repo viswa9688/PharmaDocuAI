@@ -12,6 +12,7 @@ import Documents from "@/pages/documents";
 import DocumentViewer from "@/pages/document-viewer";
 import Processing from "@/pages/processing";
 import Settings from "@/pages/settings";
+import BMRVerification from "@/pages/bmr-verification";
 
 function Router() {
   return (
@@ -21,6 +22,7 @@ function Router() {
       <Route path="/documents/:id" component={DocumentViewer} />
       <Route path="/processing" component={Processing} />
       <Route path="/settings" component={Settings} />
+      <Route path="/bmr-verification" component={BMRVerification} />
       <Route component={NotFound} />
     </Switch>
   );

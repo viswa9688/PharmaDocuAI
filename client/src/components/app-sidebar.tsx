@@ -9,7 +9,7 @@ import {
   SidebarMenuItem,
   SidebarHeader,
 } from "@/components/ui/sidebar";
-import { Upload, FileText, FolderOpen, Settings } from "lucide-react";
+import { Upload, FileText, FolderOpen, Settings, FileCheck } from "lucide-react";
 import { Link, useLocation } from "wouter";
 
 const menuItems = [
@@ -27,6 +27,11 @@ const menuItems = [
     title: "Document Library",
     url: "/documents",
     icon: FolderOpen,
+  },
+  {
+    title: "BMR Verification",
+    url: "/bmr-verification",
+    icon: FileCheck,
   },
   {
     title: "Settings",

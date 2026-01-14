@@ -5,7 +5,11 @@ import type {
   InsertPage,
   QualityIssue,
   InsertQualityIssue,
-  DocumentSummary 
+  DocumentSummary,
+  BMRVerification,
+  InsertBMRVerification,
+  BMRDiscrepancy,
+  InsertBMRDiscrepancy
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -28,17 +32,32 @@ export interface IStorage {
 
   // Summary
   getDocumentSummary(documentId: string): Promise<DocumentSummary | undefined>;
+
+  // BMR Verifications
+  createBMRVerification(verification: InsertBMRVerification): Promise<BMRVerification>;
+  getBMRVerification(id: string): Promise<BMRVerification | undefined>;
+  getAllBMRVerifications(): Promise<BMRVerification[]>;
+  updateBMRVerification(id: string, updates: Partial<BMRVerification>): Promise<BMRVerification | undefined>;
+  deleteBMRVerification(id: string): Promise<boolean>;
+
+  // BMR Discrepancies
+  createBMRDiscrepancy(discrepancy: InsertBMRDiscrepancy): Promise<BMRDiscrepancy>;
+  getDiscrepanciesByVerification(verificationId: string): Promise<BMRDiscrepancy[]>;
 }
 
 export class MemStorage implements IStorage {
   private documents: Map<string, Document>;
   private pages: Map<string, Page>;
   private qualityIssues: Map<string, QualityIssue>;
+  private bmrVerifications: Map<string, BMRVerification>;
+  private bmrDiscrepancies: Map<string, BMRDiscrepancy>;
 
   constructor() {
     this.documents = new Map();
     this.pages = new Map();
     this.qualityIssues = new Map();
+    this.bmrVerifications = new Map();
+    this.bmrDiscrepancies = new Map();
   }
 
   // Documents
@@ -52,6 +71,7 @@ export class MemStorage implements IStorage {
       totalPages: null,
       processedPages: 0,
       errorMessage: null,
+      batchDateBounds: null,
     };
     this.documents.set(id, doc);
     return doc;
@@ -94,6 +114,7 @@ export class MemStorage implements IStorage {
       ...insertPage,
       id,
       extractedText: insertPage.extractedText || null,
+      imagePath: insertPage.imagePath || null,
       issues: (insertPage.issues as string[]) || null,
       metadata: insertPage.metadata || null,
       createdAt: new Date(),
@@ -156,6 +177,72 @@ export class MemStorage implements IStorage {
       issueCount: issues.length,
       avgConfidence: pages.length > 0 ? Math.round(totalConfidence / pages.length) : 0,
     };
+  }
+
+  // BMR Verifications
+  async createBMRVerification(insertVerification: InsertBMRVerification): Promise<BMRVerification> {
+    const id = randomUUID();
+    const verification: BMRVerification = {
+      ...insertVerification,
+      id,
+      status: insertVerification.status || "pending",
+      uploadedAt: new Date(),
+      completedAt: null,
+      totalDiscrepancies: 0,
+      masterProductCardPage: insertVerification.masterProductCardPage || null,
+      bmrPage: insertVerification.bmrPage || null,
+      errorMessage: null,
+      extractedMpcData: null,
+      extractedBmrData: null,
+    };
+    this.bmrVerifications.set(id, verification);
+    return verification;
+  }
+
+  async getBMRVerification(id: string): Promise<BMRVerification | undefined> {
+    return this.bmrVerifications.get(id);
+  }
+
+  async getAllBMRVerifications(): Promise<BMRVerification[]> {
+    return Array.from(this.bmrVerifications.values()).sort(
+      (a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
+    );
+  }
+
+  async updateBMRVerification(id: string, updates: Partial<BMRVerification>): Promise<BMRVerification | undefined> {
+    const verification = this.bmrVerifications.get(id);
+    if (!verification) return undefined;
+
+    const updated = { ...verification, ...updates };
+    this.bmrVerifications.set(id, updated);
+    return updated;
+  }
+
+  async deleteBMRVerification(id: string): Promise<boolean> {
+    const discrepancies = await this.getDiscrepanciesByVerification(id);
+    discrepancies.forEach(d => this.bmrDiscrepancies.delete(d.id));
+    return this.bmrVerifications.delete(id);
+  }
+
+  // BMR Discrepancies
+  async createBMRDiscrepancy(insertDiscrepancy: InsertBMRDiscrepancy): Promise<BMRDiscrepancy> {
+    const id = randomUUID();
+    const discrepancy: BMRDiscrepancy = {
+      ...insertDiscrepancy,
+      id,
+      mpcValue: insertDiscrepancy.mpcValue || null,
+      bmrValue: insertDiscrepancy.bmrValue || null,
+      section: insertDiscrepancy.section || null,
+      createdAt: new Date(),
+    };
+    this.bmrDiscrepancies.set(id, discrepancy);
+    return discrepancy;
+  }
+
+  async getDiscrepanciesByVerification(verificationId: string): Promise<BMRDiscrepancy[]> {
+    return Array.from(this.bmrDiscrepancies.values())
+      .filter(d => d.verificationId === verificationId)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
   }
 }
 
