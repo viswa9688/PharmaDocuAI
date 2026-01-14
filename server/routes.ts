@@ -1104,52 +1104,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const pageTexts: Array<{ pageNumber: number; text: string }> = [];
 
-      // Helper function to extract text using pdf-parse
-      const extractWithPdfParse = async (): Promise<void> => {
+      // Helper function to extract text using pdfjs-dist
+      const extractWithPdfJs = async (): Promise<void> => {
         try {
-          const pdfParse = require('pdf-parse');
-          const pdfData = await pdfParse(pdfBuffer);
+          const pdfjsLib = await import('pdfjs-dist');
           
-          console.log(`[BMR-VERIFY] pdf-parse extracted ${pdfData.numpages} pages, total text length: ${pdfData.text.length}`);
-          console.log(`[BMR-VERIFY] First 500 chars of extracted text: ${pdfData.text.substring(0, 500)}`);
+          // Load PDF document from buffer
+          const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) });
+          const pdfDoc = await loadingTask.promise;
           
-          // pdf-parse returns all text combined, so we'll split by page markers or distribute evenly
-          const fullText = pdfData.text;
-          const numPages = pdfData.numpages;
+          console.log(`[BMR-VERIFY] pdfjs-dist loaded ${pdfDoc.numPages} pages`);
           
-          // Try to split by form feed characters or page breaks
-          const pageBreakPatterns = [/\f/g, /\n\s*\n\s*\n/g];
-          let textSegments: string[] = [fullText];
-          
-          for (const pattern of pageBreakPatterns) {
-            if (textSegments.length >= numPages) break;
-            const newSegments: string[] = [];
-            for (const segment of textSegments) {
-              const splits = segment.split(pattern);
-              newSegments.push(...splits);
-            }
-            if (newSegments.length > textSegments.length) {
-              textSegments = newSegments;
-            }
+          // Extract text from each page
+          for (let i = 1; i <= pdfDoc.numPages; i++) {
+            const page = await pdfDoc.getPage(i);
+            const textContent = await page.getTextContent();
+            const pageText = textContent.items
+              .map((item: any) => item.str)
+              .join(' ');
+            
+            console.log(`[BMR-VERIFY] Page ${i} text length: ${pageText.length}`);
+            console.log(`[BMR-VERIFY] Page ${i} text preview: "${pageText.substring(0, 300).replace(/\n/g, ' ')}..."`);
+            
+            pageTexts.push({ pageNumber: i, text: pageText });
           }
-          
-          // Distribute text across pages
-          if (textSegments.length < numPages) {
-            // If we couldn't split properly, assign full text to first page for keyword detection
-            for (let i = 0; i < numPages; i++) {
-              const pageText = i === 0 ? fullText : '';
-              pageTexts.push({ pageNumber: i + 1, text: pageText });
-            }
-          } else {
-            // Assign segments to pages
-            for (let i = 0; i < numPages; i++) {
-              const pageText = textSegments[i] || '';
-              console.log(`[BMR-VERIFY] Page ${i + 1} text preview: "${pageText.substring(0, 200).replace(/\n/g, ' ')}..."`);
-              pageTexts.push({ pageNumber: i + 1, text: pageText });
-            }
-          }
-        } catch (pdfParseError: any) {
-          console.error(`[BMR-VERIFY] pdf-parse failed: ${pdfParseError.message}`);
+        } catch (pdfJsError: any) {
+          console.error(`[BMR-VERIFY] pdfjs-dist failed: ${pdfJsError.message}`);
+          console.error(`[BMR-VERIFY] Error stack: ${pdfJsError.stack}`);
           // Last resort fallback
           for (let i = 0; i < pageCount; i++) {
             pageTexts.push({ 
@@ -1160,7 +1141,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       };
 
-      // Use Document AI if available, otherwise use pdf-parse for text extraction
+      // Use Document AI if available, otherwise use pdfjs-dist for text extraction
       if (documentAI) {
         try {
           console.log(`[BMR-VERIFY] Using Document AI for text extraction`);
@@ -1173,12 +1154,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             pageTexts.push({ pageNumber: i + 1, text: pageText });
           }
         } catch (docAIError: any) {
-          console.warn(`[BMR-VERIFY] Document AI failed: ${docAIError.message}, using pdf-parse fallback`);
-          await extractWithPdfParse();
+          console.warn(`[BMR-VERIFY] Document AI failed: ${docAIError.message}, using pdfjs-dist fallback`);
+          await extractWithPdfJs();
         }
       } else {
-        console.log(`[BMR-VERIFY] Document AI not configured, using pdf-parse for text extraction`);
-        await extractWithPdfParse();
+        console.log(`[BMR-VERIFY] Document AI not configured, using pdfjs-dist for text extraction`);
+        await extractWithPdfJs();
       }
       
       // Log what will be sent to the verification service
