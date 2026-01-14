@@ -456,44 +456,151 @@ export class RawMaterialVerificationService {
 
   private extractLimitsFromText(rawText: string): ExtractedLimit[] {
     const limits: ExtractedLimit[] = [];
-    const lines = rawText.split('\n');
     
-    const rangePattern = /([A-Z0-9\-]+)\s+[\w\s]+\s+([\d.]+)\s*[-–—to]+\s*([\d.]+)\s*(kg|g|mg|ml|l)?/gi;
-    let match;
+    // Normalize text - join lines to help with multi-line data
+    const normalizedText = rawText.replace(/\n/g, ' ').replace(/\s+/g, ' ');
     
-    while ((match = rangePattern.exec(rawText)) !== null) {
-      limits.push({
-        materialCode: match[1],
-        materialName: "",
-        minValue: parseFloat(match[2]),
-        maxValue: parseFloat(match[3]),
-        targetValue: null,
-        unit: match[4] || "",
-        rangeDisplay: `${match[2]} - ${match[3]} ${match[4] || ""}`.trim(),
-        confidence: 60
-      });
+    // Find material codes like RM-001, RM-002, etc.
+    const materialCodePattern = /\b(RM[-\s]?\d{3,})\b/gi;
+    const matches: RegExpExecArray[] = [];
+    let matchResult;
+    while ((matchResult = materialCodePattern.exec(normalizedText)) !== null) {
+      matches.push(matchResult);
     }
-
+    
+    for (let i = 0; i < matches.length; i++) {
+      const codeMatch = matches[i];
+      const materialCode = codeMatch[1].replace(/\s/g, '-');
+      const startPos = codeMatch.index! + codeMatch[0].length;
+      const endPos = i < matches.length - 1 ? matches[i + 1].index! : normalizedText.length;
+      const context = normalizedText.substring(startPos, endPos);
+      
+      // Extract material name (text before first number)
+      const nameMatch = context.match(/^\s*([A-Za-z][A-Za-z0-9\s]+?)(?=\s*[\d±])/);
+      const materialName = nameMatch ? nameMatch[1].trim() : "";
+      
+      // Look for parenthetical range like (4.95 kg - 5.05 kg)
+      const rangeMatch = context.match(/\(([\d.]+)\s*(kg|g|mg|ml|l)?\s*[-–—]\s*([\d.]+)\s*(kg|g|mg|ml|l)?\)/i);
+      
+      // Also try ±X.X% pattern with explicit range
+      const toleranceMatch = context.match(/±[\d.]+%\s*\(([\d.]+)\s*(kg|g|mg|ml|l)?\s*[-–—]\s*([\d.]+)\s*(kg|g|mg|ml|l)?\)/i);
+      
+      // Try simple range like "4.95 - 5.05 kg"
+      const simpleRangeMatch = context.match(/([\d.]+)\s*[-–—]\s*([\d.]+)\s*(kg|g|mg|ml|l)/i);
+      
+      let minValue: number | null = null;
+      let maxValue: number | null = null;
+      let unit = "";
+      let rangeDisplay = "";
+      
+      if (toleranceMatch) {
+        minValue = parseFloat(toleranceMatch[1]);
+        maxValue = parseFloat(toleranceMatch[3]);
+        unit = toleranceMatch[2] || toleranceMatch[4] || "";
+        rangeDisplay = `${minValue} - ${maxValue} ${unit}`.trim();
+      } else if (rangeMatch) {
+        minValue = parseFloat(rangeMatch[1]);
+        maxValue = parseFloat(rangeMatch[3]);
+        unit = rangeMatch[2] || rangeMatch[4] || "";
+        rangeDisplay = `${minValue} - ${maxValue} ${unit}`.trim();
+      } else if (simpleRangeMatch) {
+        minValue = parseFloat(simpleRangeMatch[1]);
+        maxValue = parseFloat(simpleRangeMatch[2]);
+        unit = simpleRangeMatch[3] || "";
+        rangeDisplay = `${minValue} - ${maxValue} ${unit}`.trim();
+      } else {
+        // Try to find BOM quantity and apply default ±2% tolerance
+        const qtyMatch = context.match(/([\d.]+)\s*(kg|g|mg|ml|l)\b/i);
+        if (qtyMatch) {
+          const targetValue = parseFloat(qtyMatch[1]);
+          minValue = targetValue * 0.98;
+          maxValue = targetValue * 1.02;
+          unit = qtyMatch[2];
+          rangeDisplay = `${targetValue} ${unit} (±2%)`;
+        }
+      }
+      
+      if (minValue !== null && maxValue !== null) {
+        limits.push({
+          materialCode,
+          materialName,
+          minValue,
+          maxValue,
+          targetValue: null,
+          unit,
+          rangeDisplay,
+          confidence: 70
+        });
+      }
+    }
+    
+    console.log(`[RAW-MATERIAL] Extracted ${limits.length} limits from text`);
     return limits;
   }
 
   private extractActualsFromText(rawText: string): ExtractedActual[] {
     const actuals: ExtractedActual[] = [];
     
-    const pattern = /([A-Z0-9\-]+)\s+[\w\s]+\s+([\d.]+)\s*(kg|g|mg|ml|l)?/gi;
-    let match;
+    // Normalize text
+    const normalizedText = rawText.replace(/\n/g, ' ').replace(/\s+/g, ' ');
     
-    while ((match = pattern.exec(rawText)) !== null) {
-      actuals.push({
-        materialCode: match[1],
-        materialName: "",
-        actualValue: parseFloat(match[2]),
-        unit: match[3] || "",
-        rawText: `${match[2]} ${match[3] || ""}`.trim(),
-        confidence: 50
-      });
+    // Find material codes like RM-001, RM-002, etc.
+    const materialCodePattern = /\b(RM[-\s]?\d{3,})\b/gi;
+    const matches: RegExpExecArray[] = [];
+    let matchResult;
+    while ((matchResult = materialCodePattern.exec(normalizedText)) !== null) {
+      matches.push(matchResult);
     }
-
+    
+    for (let i = 0; i < matches.length; i++) {
+      const codeMatch = matches[i];
+      const materialCode = codeMatch[1].replace(/\s/g, '-');
+      const startPos = codeMatch.index! + codeMatch[0].length;
+      const endPos = i < matches.length - 1 ? matches[i + 1].index! : normalizedText.length;
+      const context = normalizedText.substring(startPos, Math.min(endPos, startPos + 200));
+      
+      // Extract material name
+      const nameMatch = context.match(/^\s*([A-Za-z][A-Za-z0-9\s]+?)(?=\s*[\d])/);
+      const materialName = nameMatch ? nameMatch[1].trim() : "";
+      
+      // Find quantities - look for patterns like "5.0 kg" - may have multiple
+      const qtyPattern = /([\d.]+)\s*(kg|g|mg|ml|l)\b/gi;
+      const qtyMatches: RegExpExecArray[] = [];
+      let qtyMatch;
+      while ((qtyMatch = qtyPattern.exec(context)) !== null) {
+        qtyMatches.push(qtyMatch);
+      }
+      
+      // For verification page, we often have BOM qty then Actual qty
+      // Take the last quantity found as actual, or second if there are exactly 2
+      let actualValue: number | null = null;
+      let unit = "";
+      let rawQtyText = "";
+      
+      if (qtyMatches.length >= 2) {
+        // Likely format: BOM Quantity | Actual Quantity - take second
+        actualValue = parseFloat(qtyMatches[1][1]);
+        unit = qtyMatches[1][2];
+        rawQtyText = qtyMatches[1][0];
+      } else if (qtyMatches.length === 1) {
+        actualValue = parseFloat(qtyMatches[0][1]);
+        unit = qtyMatches[0][2];
+        rawQtyText = qtyMatches[0][0];
+      }
+      
+      if (actualValue !== null) {
+        actuals.push({
+          materialCode,
+          materialName,
+          actualValue,
+          unit,
+          rawText: rawQtyText,
+          confidence: 65
+        });
+      }
+    }
+    
+    console.log(`[RAW-MATERIAL] Extracted ${actuals.length} actuals from text`);
     return actuals;
   }
 }
