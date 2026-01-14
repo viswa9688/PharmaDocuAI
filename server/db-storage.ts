@@ -5,6 +5,9 @@ import {
   qualityIssues,
   bmrVerifications,
   bmrDiscrepancies,
+  rawMaterialLimits,
+  rawMaterialVerifications,
+  rawMaterialResults,
   type Document,
   type InsertDocument,
   type Page,
@@ -16,8 +19,14 @@ import {
   type InsertBMRVerification,
   type BMRDiscrepancy,
   type InsertBMRDiscrepancy,
+  type RawMaterialLimit,
+  type InsertRawMaterialLimit,
+  type RawMaterialVerification,
+  type InsertRawMaterialVerification,
+  type RawMaterialResult,
+  type InsertRawMaterialResult,
 } from "@shared/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 import type { IStorage } from "./storage";
 
 export class DBStorage implements IStorage {
@@ -166,6 +175,89 @@ export class DBStorage implements IStorage {
       .from(bmrDiscrepancies)
       .where(eq(bmrDiscrepancies.verificationId, verificationId))
       .orderBy(bmrDiscrepancies.createdAt);
+  }
+
+  // Raw Material Limits
+  async createRawMaterialLimit(insertLimit: InsertRawMaterialLimit): Promise<RawMaterialLimit> {
+    const [limit] = await db.insert(rawMaterialLimits).values(insertLimit).returning();
+    return limit;
+  }
+
+  async createRawMaterialLimits(insertLimits: InsertRawMaterialLimit[]): Promise<RawMaterialLimit[]> {
+    if (insertLimits.length === 0) return [];
+    const limits = await db.insert(rawMaterialLimits).values(insertLimits).returning();
+    return limits;
+  }
+
+  async getRawMaterialLimit(id: string): Promise<RawMaterialLimit | undefined> {
+    const [limit] = await db.select().from(rawMaterialLimits).where(eq(rawMaterialLimits.id, id));
+    return limit;
+  }
+
+  async getRawMaterialLimitsByMpc(mpcNumber: string): Promise<RawMaterialLimit[]> {
+    return db
+      .select()
+      .from(rawMaterialLimits)
+      .where(eq(rawMaterialLimits.mpcNumber, mpcNumber))
+      .orderBy(rawMaterialLimits.materialCode);
+  }
+
+  async getAllRawMaterialLimits(): Promise<RawMaterialLimit[]> {
+    return db.select().from(rawMaterialLimits).orderBy(desc(rawMaterialLimits.createdAt));
+  }
+
+  async deleteRawMaterialLimitsByMpc(mpcNumber: string): Promise<boolean> {
+    const result = await db.delete(rawMaterialLimits).where(eq(rawMaterialLimits.mpcNumber, mpcNumber));
+    return result.rowCount !== null && result.rowCount > 0;
+  }
+
+  // Raw Material Verifications
+  async createRawMaterialVerification(insertVerification: InsertRawMaterialVerification): Promise<RawMaterialVerification> {
+    const [verification] = await db.insert(rawMaterialVerifications).values(insertVerification).returning();
+    return verification;
+  }
+
+  async getRawMaterialVerification(id: string): Promise<RawMaterialVerification | undefined> {
+    const [verification] = await db.select().from(rawMaterialVerifications).where(eq(rawMaterialVerifications.id, id));
+    return verification;
+  }
+
+  async getAllRawMaterialVerifications(): Promise<RawMaterialVerification[]> {
+    return db.select().from(rawMaterialVerifications).orderBy(desc(rawMaterialVerifications.uploadedAt));
+  }
+
+  async updateRawMaterialVerification(id: string, updates: Partial<RawMaterialVerification>): Promise<RawMaterialVerification | undefined> {
+    const [updated] = await db
+      .update(rawMaterialVerifications)
+      .set(updates)
+      .where(eq(rawMaterialVerifications.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteRawMaterialVerification(id: string): Promise<boolean> {
+    const result = await db.delete(rawMaterialVerifications).where(eq(rawMaterialVerifications.id, id));
+    return result.rowCount !== null && result.rowCount > 0;
+  }
+
+  // Raw Material Results
+  async createRawMaterialResult(insertResult: InsertRawMaterialResult): Promise<RawMaterialResult> {
+    const [result] = await db.insert(rawMaterialResults).values(insertResult).returning();
+    return result;
+  }
+
+  async createRawMaterialResults(insertResults: InsertRawMaterialResult[]): Promise<RawMaterialResult[]> {
+    if (insertResults.length === 0) return [];
+    const results = await db.insert(rawMaterialResults).values(insertResults).returning();
+    return results;
+  }
+
+  async getRawMaterialResultsByVerification(verificationId: string): Promise<RawMaterialResult[]> {
+    return db
+      .select()
+      .from(rawMaterialResults)
+      .where(eq(rawMaterialResults.verificationId, verificationId))
+      .orderBy(rawMaterialResults.materialCode);
   }
 }
 

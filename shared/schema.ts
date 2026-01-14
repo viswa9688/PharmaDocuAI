@@ -389,3 +389,104 @@ export type BMRVerificationResult = {
   matchedFields: string[];
   totalFieldsCompared: number;
 };
+
+// ==========================================
+// RAW MATERIAL VERIFICATION TYPES
+// ==========================================
+
+// Criticality levels for raw materials
+export const materialCriticalities = ["critical", "non-critical"] as const;
+export type MaterialCriticality = typeof materialCriticalities[number];
+
+// Raw Material BoM (Bill of Materials) limits table - stores approved limits from Master Product Card
+export const rawMaterialLimits = pgTable("raw_material_limits", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  mpcNumber: text("mpc_number").notNull(),  // Master Product Card number (e.g., MPC-2024-003)
+  materialCode: text("material_code").notNull(),  // e.g., RM-001
+  materialName: text("material_name").notNull(),  // e.g., API XYZ 50 mg
+  bomQuantity: text("bom_quantity").notNull(),  // Standard quantity (e.g., "5.0 kg")
+  bomQuantityValue: integer("bom_quantity_value"),  // Numeric value in base unit (e.g., 5000 for 5.0 kg in grams)
+  bomQuantityUnit: text("bom_quantity_unit"),  // Unit (e.g., "kg", "g", "mg")
+  toleranceType: text("tolerance_type").notNull(),  // "percentage" or "fixed_range"
+  tolerancePercent: integer("tolerance_percent"),  // e.g., 1 for ±1%, 2 for ±2%
+  toleranceMin: integer("tolerance_min"),  // For fixed range: minimum in base unit
+  toleranceMax: integer("tolerance_max"),  // For fixed range: maximum in base unit
+  toleranceDisplay: text("tolerance_display"),  // Human-readable tolerance (e.g., "±1.0% (4.95 kg – 5.05 kg)")
+  criticality: text("criticality").notNull().default("non-critical"),  // "critical" or "non-critical"
+  approvedVendor: text("approved_vendor"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Raw Material Verification Sessions - stores verification instances
+export const rawMaterialVerifications = pgTable("raw_material_verifications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  mpcNumber: text("mpc_number").notNull(),
+  bmrNumber: text("bmr_number"),  // Batch Manufacturing Record number
+  filename: text("filename").notNull(),
+  fileSize: integer("file_size").notNull(),
+  status: text("status").notNull().default("pending"),  // pending, processing, completed, failed
+  uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
+  completedAt: timestamp("completed_at"),
+  totalMaterials: integer("total_materials").default(0),
+  materialsWithinLimits: integer("materials_within_limits").default(0),
+  materialsOutOfLimits: integer("materials_out_of_limits").default(0),
+  errorMessage: text("error_message"),
+});
+
+// Individual raw material verification results
+export const rawMaterialResults = pgTable("raw_material_results", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  verificationId: varchar("verification_id").notNull().references(() => rawMaterialVerifications.id, { onDelete: "cascade" }),
+  limitId: varchar("limit_id").references(() => rawMaterialLimits.id),  // Reference to the BoM limit
+  materialCode: text("material_code").notNull(),
+  materialName: text("material_name").notNull(),
+  bomQuantity: text("bom_quantity").notNull(),  // Expected from BoM
+  actualQuantity: text("actual_quantity"),  // Actual from batch record
+  actualQuantityValue: integer("actual_quantity_value"),  // Numeric value extracted
+  withinLimits: boolean("within_limits"),  // true if within tolerance
+  toleranceDisplay: text("tolerance_display"),  // e.g., "±2.0% (44.10 kg – 45.90 kg)"
+  verifiedBy: text("verified_by"),  // Person who verified
+  approvedVendor: boolean("approved_vendor"),  // Whether vendor is approved
+  criticality: text("criticality"),  // "critical" or "non-critical"
+  deviationPercent: integer("deviation_percent"),  // How much deviation from BoM (in basis points for precision)
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Insert schemas for raw material tables
+export const insertRawMaterialLimitSchema = createInsertSchema(rawMaterialLimits).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertRawMaterialVerificationSchema = createInsertSchema(rawMaterialVerifications).omit({
+  id: true,
+  uploadedAt: true,
+  completedAt: true,
+  totalMaterials: true,
+  materialsWithinLimits: true,
+  materialsOutOfLimits: true,
+  errorMessage: true,
+});
+
+export const insertRawMaterialResultSchema = createInsertSchema(rawMaterialResults).omit({
+  id: true,
+  createdAt: true,
+});
+
+// Types for raw material verification
+export type RawMaterialLimit = typeof rawMaterialLimits.$inferSelect;
+export type InsertRawMaterialLimit = z.infer<typeof insertRawMaterialLimitSchema>;
+export type RawMaterialVerification = typeof rawMaterialVerifications.$inferSelect;
+export type InsertRawMaterialVerification = z.infer<typeof insertRawMaterialVerificationSchema>;
+export type RawMaterialResult = typeof rawMaterialResults.$inferSelect;
+export type InsertRawMaterialResult = z.infer<typeof insertRawMaterialResultSchema>;
+
+// Verification result summary for frontend
+export type RawMaterialVerificationResult = {
+  verification: RawMaterialVerification;
+  results: RawMaterialResult[];
+  limits: RawMaterialLimit[];
+};

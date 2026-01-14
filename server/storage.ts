@@ -9,7 +9,13 @@ import type {
   BMRVerification,
   InsertBMRVerification,
   BMRDiscrepancy,
-  InsertBMRDiscrepancy
+  InsertBMRDiscrepancy,
+  RawMaterialLimit,
+  InsertRawMaterialLimit,
+  RawMaterialVerification,
+  InsertRawMaterialVerification,
+  RawMaterialResult,
+  InsertRawMaterialResult
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -43,6 +49,26 @@ export interface IStorage {
   // BMR Discrepancies
   createBMRDiscrepancy(discrepancy: InsertBMRDiscrepancy): Promise<BMRDiscrepancy>;
   getDiscrepanciesByVerification(verificationId: string): Promise<BMRDiscrepancy[]>;
+
+  // Raw Material Limits
+  createRawMaterialLimit(limit: InsertRawMaterialLimit): Promise<RawMaterialLimit>;
+  createRawMaterialLimits(limits: InsertRawMaterialLimit[]): Promise<RawMaterialLimit[]>;
+  getRawMaterialLimit(id: string): Promise<RawMaterialLimit | undefined>;
+  getRawMaterialLimitsByMpc(mpcNumber: string): Promise<RawMaterialLimit[]>;
+  getAllRawMaterialLimits(): Promise<RawMaterialLimit[]>;
+  deleteRawMaterialLimitsByMpc(mpcNumber: string): Promise<boolean>;
+
+  // Raw Material Verifications
+  createRawMaterialVerification(verification: InsertRawMaterialVerification): Promise<RawMaterialVerification>;
+  getRawMaterialVerification(id: string): Promise<RawMaterialVerification | undefined>;
+  getAllRawMaterialVerifications(): Promise<RawMaterialVerification[]>;
+  updateRawMaterialVerification(id: string, updates: Partial<RawMaterialVerification>): Promise<RawMaterialVerification | undefined>;
+  deleteRawMaterialVerification(id: string): Promise<boolean>;
+
+  // Raw Material Results
+  createRawMaterialResult(result: InsertRawMaterialResult): Promise<RawMaterialResult>;
+  createRawMaterialResults(results: InsertRawMaterialResult[]): Promise<RawMaterialResult[]>;
+  getRawMaterialResultsByVerification(verificationId: string): Promise<RawMaterialResult[]>;
 }
 
 export class MemStorage implements IStorage {
@@ -51,6 +77,9 @@ export class MemStorage implements IStorage {
   private qualityIssues: Map<string, QualityIssue>;
   private bmrVerifications: Map<string, BMRVerification>;
   private bmrDiscrepancies: Map<string, BMRDiscrepancy>;
+  private rawMaterialLimitsMap: Map<string, RawMaterialLimit>;
+  private rawMaterialVerificationsMap: Map<string, RawMaterialVerification>;
+  private rawMaterialResultsMap: Map<string, RawMaterialResult>;
 
   constructor() {
     this.documents = new Map();
@@ -58,6 +87,9 @@ export class MemStorage implements IStorage {
     this.qualityIssues = new Map();
     this.bmrVerifications = new Map();
     this.bmrDiscrepancies = new Map();
+    this.rawMaterialLimitsMap = new Map();
+    this.rawMaterialVerificationsMap = new Map();
+    this.rawMaterialResultsMap = new Map();
   }
 
   // Documents
@@ -243,6 +275,134 @@ export class MemStorage implements IStorage {
     return Array.from(this.bmrDiscrepancies.values())
       .filter(d => d.verificationId === verificationId)
       .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  }
+
+  // Raw Material Limits
+  async createRawMaterialLimit(insertLimit: InsertRawMaterialLimit): Promise<RawMaterialLimit> {
+    const id = randomUUID();
+    const limit: RawMaterialLimit = {
+      ...insertLimit,
+      id,
+      bomQuantityValue: insertLimit.bomQuantityValue || null,
+      bomQuantityUnit: insertLimit.bomQuantityUnit || null,
+      tolerancePercent: insertLimit.tolerancePercent || null,
+      toleranceMin: insertLimit.toleranceMin || null,
+      toleranceMax: insertLimit.toleranceMax || null,
+      toleranceDisplay: insertLimit.toleranceDisplay || null,
+      criticality: insertLimit.criticality || "non-critical",
+      approvedVendor: insertLimit.approvedVendor || null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.rawMaterialLimitsMap.set(id, limit);
+    return limit;
+  }
+
+  async createRawMaterialLimits(insertLimits: InsertRawMaterialLimit[]): Promise<RawMaterialLimit[]> {
+    const results: RawMaterialLimit[] = [];
+    for (const insertLimit of insertLimits) {
+      results.push(await this.createRawMaterialLimit(insertLimit));
+    }
+    return results;
+  }
+
+  async getRawMaterialLimit(id: string): Promise<RawMaterialLimit | undefined> {
+    return this.rawMaterialLimitsMap.get(id);
+  }
+
+  async getRawMaterialLimitsByMpc(mpcNumber: string): Promise<RawMaterialLimit[]> {
+    return Array.from(this.rawMaterialLimitsMap.values())
+      .filter(l => l.mpcNumber === mpcNumber)
+      .sort((a, b) => a.materialCode.localeCompare(b.materialCode));
+  }
+
+  async getAllRawMaterialLimits(): Promise<RawMaterialLimit[]> {
+    return Array.from(this.rawMaterialLimitsMap.values())
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  async deleteRawMaterialLimitsByMpc(mpcNumber: string): Promise<boolean> {
+    const limits = await this.getRawMaterialLimitsByMpc(mpcNumber);
+    limits.forEach(l => this.rawMaterialLimitsMap.delete(l.id));
+    return limits.length > 0;
+  }
+
+  // Raw Material Verifications
+  async createRawMaterialVerification(insertVerification: InsertRawMaterialVerification): Promise<RawMaterialVerification> {
+    const id = randomUUID();
+    const verification: RawMaterialVerification = {
+      ...insertVerification,
+      id,
+      bmrNumber: insertVerification.bmrNumber || null,
+      status: insertVerification.status || "pending",
+      uploadedAt: new Date(),
+      completedAt: null,
+      totalMaterials: 0,
+      materialsWithinLimits: 0,
+      materialsOutOfLimits: 0,
+      errorMessage: null,
+    };
+    this.rawMaterialVerificationsMap.set(id, verification);
+    return verification;
+  }
+
+  async getRawMaterialVerification(id: string): Promise<RawMaterialVerification | undefined> {
+    return this.rawMaterialVerificationsMap.get(id);
+  }
+
+  async getAllRawMaterialVerifications(): Promise<RawMaterialVerification[]> {
+    return Array.from(this.rawMaterialVerificationsMap.values())
+      .sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
+  }
+
+  async updateRawMaterialVerification(id: string, updates: Partial<RawMaterialVerification>): Promise<RawMaterialVerification | undefined> {
+    const verification = this.rawMaterialVerificationsMap.get(id);
+    if (!verification) return undefined;
+    const updated = { ...verification, ...updates };
+    this.rawMaterialVerificationsMap.set(id, updated);
+    return updated;
+  }
+
+  async deleteRawMaterialVerification(id: string): Promise<boolean> {
+    const results = await this.getRawMaterialResultsByVerification(id);
+    results.forEach(r => this.rawMaterialResultsMap.delete(r.id));
+    return this.rawMaterialVerificationsMap.delete(id);
+  }
+
+  // Raw Material Results
+  async createRawMaterialResult(insertResult: InsertRawMaterialResult): Promise<RawMaterialResult> {
+    const id = randomUUID();
+    const result: RawMaterialResult = {
+      ...insertResult,
+      id,
+      limitId: insertResult.limitId || null,
+      actualQuantity: insertResult.actualQuantity || null,
+      actualQuantityValue: insertResult.actualQuantityValue || null,
+      withinLimits: insertResult.withinLimits || null,
+      toleranceDisplay: insertResult.toleranceDisplay || null,
+      verifiedBy: insertResult.verifiedBy || null,
+      approvedVendor: insertResult.approvedVendor || null,
+      criticality: insertResult.criticality || null,
+      deviationPercent: insertResult.deviationPercent || null,
+      notes: insertResult.notes || null,
+      createdAt: new Date(),
+    };
+    this.rawMaterialResultsMap.set(id, result);
+    return result;
+  }
+
+  async createRawMaterialResults(insertResults: InsertRawMaterialResult[]): Promise<RawMaterialResult[]> {
+    const results: RawMaterialResult[] = [];
+    for (const insertResult of insertResults) {
+      results.push(await this.createRawMaterialResult(insertResult));
+    }
+    return results;
+  }
+
+  async getRawMaterialResultsByVerification(verificationId: string): Promise<RawMaterialResult[]> {
+    return Array.from(this.rawMaterialResultsMap.values())
+      .filter(r => r.verificationId === verificationId)
+      .sort((a, b) => a.materialCode.localeCompare(b.materialCode));
   }
 }
 
