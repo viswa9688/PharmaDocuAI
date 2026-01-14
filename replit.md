@@ -63,6 +63,15 @@ The system is built on a React, Express, PostgreSQL, and TypeScript stack.
 - **Modularity**: Services are clearly separated (Document AI, classifier, PDF processor, layout analyzer, signature analyzer) for maintainability and scalability.
 - **Error Handling**: Comprehensive error handling and graceful fallbacks are integrated throughout the pipeline, particularly for compliance validation.
 
+### BMR Verification Feature
+- **Purpose**: Validates Batch Manufacturing Records against Master Product Cards to identify discrepancies
+- **Workflow**: Upload single PDF containing both MPC and BMR → System identifies documents → Extracts fields → Compares values → Flags mismatches
+- **Document Identification**: Uses keyword detection to classify pages as MPC or BMR
+- **Field Extraction**: Multi-pattern regex approach with fallback to tabular label matching for robustness
+- **Comparison Logic**: Normalizes values (case, whitespace) and compares canonical fields
+- **Discrepancy Severity**: Critical (product name/code), Major (batch size, ingredients), Minor (descriptions, locations)
+- **Storage**: `bmrVerifications` table for sessions, `bmrDiscrepancies` table for detected issues
+
 ## External Dependencies
 - **Google Cloud Platform**:
     - **Google Document AI**: For advanced document parsing and data extraction.
