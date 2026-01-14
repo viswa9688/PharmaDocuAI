@@ -1095,44 +1095,110 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Process BMR verification function
   async function processBMRVerification(verificationId: string, pdfBuffer: Buffer) {
     try {
+      console.log(`[BMR-VERIFY] Starting verification ${verificationId}`);
       await storage.updateBMRVerification(verificationId, { status: "processing" });
 
       // Extract text from each page using PDF processor
       const pageCount = await pdfProcessor.getPageCount(pdfBuffer);
+      console.log(`[BMR-VERIFY] PDF has ${pageCount} pages`);
+      
       const pageTexts: Array<{ pageNumber: number; text: string }> = [];
 
-      // Use Document AI if available, otherwise use fallback text extraction
+      // Helper function to extract text using pdf-parse
+      const extractWithPdfParse = async (): Promise<void> => {
+        try {
+          const pdfParse = require('pdf-parse');
+          const pdfData = await pdfParse(pdfBuffer);
+          
+          console.log(`[BMR-VERIFY] pdf-parse extracted ${pdfData.numpages} pages, total text length: ${pdfData.text.length}`);
+          console.log(`[BMR-VERIFY] First 500 chars of extracted text: ${pdfData.text.substring(0, 500)}`);
+          
+          // pdf-parse returns all text combined, so we'll split by page markers or distribute evenly
+          const fullText = pdfData.text;
+          const numPages = pdfData.numpages;
+          
+          // Try to split by form feed characters or page breaks
+          const pageBreakPatterns = [/\f/g, /\n\s*\n\s*\n/g];
+          let textSegments: string[] = [fullText];
+          
+          for (const pattern of pageBreakPatterns) {
+            if (textSegments.length >= numPages) break;
+            const newSegments: string[] = [];
+            for (const segment of textSegments) {
+              const splits = segment.split(pattern);
+              newSegments.push(...splits);
+            }
+            if (newSegments.length > textSegments.length) {
+              textSegments = newSegments;
+            }
+          }
+          
+          // Distribute text across pages
+          if (textSegments.length < numPages) {
+            // If we couldn't split properly, assign full text to first page for keyword detection
+            for (let i = 0; i < numPages; i++) {
+              const pageText = i === 0 ? fullText : '';
+              pageTexts.push({ pageNumber: i + 1, text: pageText });
+            }
+          } else {
+            // Assign segments to pages
+            for (let i = 0; i < numPages; i++) {
+              const pageText = textSegments[i] || '';
+              console.log(`[BMR-VERIFY] Page ${i + 1} text preview: "${pageText.substring(0, 200).replace(/\n/g, ' ')}..."`);
+              pageTexts.push({ pageNumber: i + 1, text: pageText });
+            }
+          }
+        } catch (pdfParseError: any) {
+          console.error(`[BMR-VERIFY] pdf-parse failed: ${pdfParseError.message}`);
+          // Last resort fallback
+          for (let i = 0; i < pageCount; i++) {
+            pageTexts.push({ 
+              pageNumber: i + 1, 
+              text: '' 
+            });
+          }
+        }
+      };
+
+      // Use Document AI if available, otherwise use pdf-parse for text extraction
       if (documentAI) {
         try {
+          console.log(`[BMR-VERIFY] Using Document AI for text extraction`);
           const document = await documentAI.processDocument(pdfBuffer);
           const totalPages = documentAI.getTotalPages(document);
           
           for (let i = 0; i < totalPages; i++) {
             const pageText = documentAI.extractPageText(document, i);
+            console.log(`[BMR-VERIFY] Page ${i + 1} extracted, text length: ${pageText.length}`);
             pageTexts.push({ pageNumber: i + 1, text: pageText });
           }
         } catch (docAIError: any) {
-          console.warn("Document AI failed, using fallback:", docAIError.message);
-          // Fallback: use basic text extraction
-          for (let i = 0; i < pageCount; i++) {
-            pageTexts.push({ 
-              pageNumber: i + 1, 
-              text: `Page ${i + 1} content - Document AI not configured` 
-            });
-          }
+          console.warn(`[BMR-VERIFY] Document AI failed: ${docAIError.message}, using pdf-parse fallback`);
+          await extractWithPdfParse();
         }
       } else {
-        // No Document AI, use demo mode
-        for (let i = 0; i < pageCount; i++) {
-          pageTexts.push({ 
-            pageNumber: i + 1, 
-            text: `Page ${i + 1} content - Document AI not configured` 
-          });
+        console.log(`[BMR-VERIFY] Document AI not configured, using pdf-parse for text extraction`);
+        await extractWithPdfParse();
+      }
+      
+      // Log what will be sent to the verification service
+      console.log(`[BMR-VERIFY] Total pages to verify: ${pageTexts.length}`);
+      for (const pt of pageTexts) {
+        const docType = bmrVerificationService.identifyDocumentType(pt.text);
+        console.log(`[BMR-VERIFY] Page ${pt.pageNumber}: detected as "${docType}", text length: ${pt.text.length}`);
+        if (docType === "unknown" && pt.text.length > 0) {
+          console.log(`[BMR-VERIFY] Page ${pt.pageNumber} keywords check - looking for: "master copy", "master product card", "bmr", "batch manufacturing record"...`);
+          console.log(`[BMR-VERIFY] Page ${pt.pageNumber} first 300 chars: "${pt.text.substring(0, 300).toLowerCase().replace(/\n/g, ' ')}"`);
         }
       }
 
       // Run verification
       const result = await bmrVerificationService.processAndVerify(pageTexts);
+      console.log(`[BMR-VERIFY] Verification result:`, { 
+        mpcPage: result.mpcPageNumber, 
+        bmrPage: result.bmrPageNumber, 
+        error: result.error 
+      });
 
       if (result.error) {
         await storage.updateBMRVerification(verificationId, {
