@@ -1110,10 +1110,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Use legacy build for Node.js environments
           const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
           
-          // Load PDF document from buffer
+          // Load PDF document from buffer with additional options
           const loadingTask = pdfjsLib.getDocument({ 
             data: new Uint8Array(pdfBuffer),
-            useSystemFonts: true 
+            useSystemFonts: true,
+            verbosity: 0
           });
           const pdfDoc = await loadingTask.promise;
           
@@ -1122,8 +1123,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Extract text from each page
           for (let i = 1; i <= pdfDoc.numPages; i++) {
             const page = await pdfDoc.getPage(i);
-            const textContent = await page.getTextContent();
+            const textContent = await page.getTextContent({ 
+              includeMarkedContent: true,
+              disableNormalization: false
+            });
+            
+            console.log(`[BMR-VERIFY] Page ${i} raw items count: ${textContent.items.length}`);
+            
+            // Log first few items for debugging
+            if (textContent.items.length > 0) {
+              console.log(`[BMR-VERIFY] Page ${i} first 3 items:`, 
+                JSON.stringify(textContent.items.slice(0, 3)));
+            }
+            
             const pageText = textContent.items
+              .filter((item: any) => item.str !== undefined)
               .map((item: any) => item.str)
               .join(' ');
             
@@ -1131,6 +1145,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log(`[BMR-VERIFY] Page ${i} text preview: "${pageText.substring(0, 300).replace(/\n/g, ' ')}..."`);
             
             pageTexts.push({ pageNumber: i, text: pageText });
+          }
+          
+          // Check if all pages have 0 text - likely an image-based PDF
+          const totalText = pageTexts.reduce((sum, p) => sum + p.text.length, 0);
+          if (totalText === 0) {
+            console.warn(`[BMR-VERIFY] WARNING: No text extracted from any page. This PDF is likely image-based (scanned). Google Document AI credentials are required for OCR.`);
           }
         } catch (pdfJsError: any) {
           console.error(`[BMR-VERIFY] pdfjs-dist failed: ${pdfJsError.message}`);
