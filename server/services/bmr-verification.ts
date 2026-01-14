@@ -59,17 +59,68 @@ export class BMRVerificationService {
   identifyDocumentType(text: string): "master_product_card" | "bmr" | "unknown" {
     const lowerText = text.toLowerCase();
     
-    for (const identifier of this.mpcIdentifiers) {
-      if (lowerText.includes(identifier)) {
-        return "master_product_card";
+    // Count matches for each document type with weighted scores
+    let mpcScore = 0;
+    let bmrScore = 0;
+    const mpcMatches: string[] = [];
+    const bmrMatches: string[] = [];
+    
+    // MPC identifiers with weights (more specific = higher weight)
+    const mpcWeighted = [
+      { id: "master product card", weight: 10 },
+      { id: "master copy", weight: 5 },
+      { id: "master document", weight: 5 },
+      { id: "product specification", weight: 3 },
+      { id: "master specification", weight: 5 },
+      { id: "mpc", weight: 2 },  // Lower weight - could be abbreviation for other things
+    ];
+    
+    // BMR identifiers with weights
+    const bmrWeighted = [
+      { id: "batch manufacturing record", weight: 10 },
+      { id: "batch record", weight: 8 },
+      { id: "manufacturing record", weight: 5 },
+      { id: "bmr", weight: 3 },  // Lower weight - could be abbreviation
+      { id: "batch number", weight: 2 },
+      { id: "batch no", weight: 2 },
+      { id: "lot number", weight: 2 },
+      { id: "lot no", weight: 2 },
+    ];
+    
+    for (const { id, weight } of mpcWeighted) {
+      if (lowerText.includes(id)) {
+        mpcScore += weight;
+        mpcMatches.push(id);
       }
     }
     
-    for (const identifier of this.bmrIdentifiers) {
-      if (lowerText.includes(identifier)) {
+    for (const { id, weight } of bmrWeighted) {
+      if (lowerText.includes(id)) {
+        bmrScore += weight;
+        bmrMatches.push(id);
+      }
+    }
+    
+    console.log(`[BMR-VERIFY] Document type detection - MPC score: ${mpcScore} (${mpcMatches.join(', ')}), BMR score: ${bmrScore} (${bmrMatches.join(', ')})`);
+    
+    // If both have matches, pick the higher score
+    if (mpcScore > 0 && bmrScore > 0) {
+      if (mpcScore > bmrScore) {
+        return "master_product_card";
+      } else if (bmrScore > mpcScore) {
+        return "bmr";
+      }
+      // Equal scores - look for the most definitive identifier
+      if (mpcMatches.includes("master product card")) {
+        return "master_product_card";
+      }
+      if (bmrMatches.includes("batch manufacturing record") || bmrMatches.includes("batch record")) {
         return "bmr";
       }
     }
+    
+    if (mpcScore > 0) return "master_product_card";
+    if (bmrScore > 0) return "bmr";
     
     return "unknown";
   }
