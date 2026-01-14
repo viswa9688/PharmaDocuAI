@@ -1309,6 +1309,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const bmrNumber = bmrMatch ? bmrMatch[1] || bmrMatch[0] : null;
 
       console.log(`[RAW-MATERIAL] Processed ${totalPages} pages, MPC: ${mpcNumber}, BMR: ${bmrNumber}`);
+      
+      // Debug logging for table extraction
+      for (const page of pagesData) {
+        console.log(`[RAW-MATERIAL] Page ${page.pageNumber}: ${page.tables.length} tables, text length: ${page.rawText.length}`);
+        for (let t = 0; t < page.tables.length; t++) {
+          const table = page.tables[t];
+          console.log(`[RAW-MATERIAL]   Table ${t}: ${table.rows?.length || 0} rows`);
+          if (table.rows && table.rows.length > 0) {
+            const firstRow = table.rows[0]?.cells?.map((c: any) => typeof c === 'string' ? c : c.text || '').join(' | ');
+            console.log(`[RAW-MATERIAL]     First row: ${firstRow?.substring(0, 200)}`);
+          }
+        }
+        console.log(`[RAW-MATERIAL]   Raw text snippet: ${page.rawText.substring(0, 300)}`);
+      }
 
       // Create verification record
       const verification = await storage.createRawMaterialVerification({
