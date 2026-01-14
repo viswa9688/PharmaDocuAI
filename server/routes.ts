@@ -1259,177 +1259,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }
 
   // ==========================================
-  // Raw Material Verification Endpoints
+  // Raw Material Verification Endpoints (Simplified Single-PDF Workflow)
   // ==========================================
 
-  // Upload BoM/MPC document to extract material limits
-  app.post("/api/raw-material/limits/upload", upload.single("file"), async (req, res) => {
+  // Upload single PDF with limits page and verification page
+  app.post("/api/raw-material/upload", upload.single("file"), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ error: "No file uploaded" });
-      }
-
-      const { mpcNumber, productName } = req.body;
-      if (!mpcNumber) {
-        return res.status(400).json({ error: "MPC number is required" });
-      }
-
-      // Process the document to extract material limits
-      const pdfBuffer = req.file.buffer;
-      let tables: any[] = [];
-      let formFields: any[] = [];
-      let rawText = "";
-
-      // Use Document AI if available
-      if (documentAI) {
-        try {
-          const document = await documentAI.processDocument(pdfBuffer);
-          const totalPages = documentAI.getTotalPages(document);
-          
-          // Extract tables and form fields from all pages
-          for (let i = 0; i < totalPages; i++) {
-            const pageData = documentAI.extractPageData(document, i);
-            if (pageData) {
-              tables.push(...(pageData.tables || []));
-              formFields.push(...(pageData.formFields || []));
-              rawText += (pageData.extractedText || "") + "\n";
-            }
-          }
-          console.log(`[RAW-MATERIAL] Document AI extracted ${tables.length} tables, ${formFields.length} form fields from ${totalPages} pages`);
-        } catch (err: any) {
-          console.warn(`[RAW-MATERIAL] Document AI failed: ${err.message}`);
-        }
-      }
-
-      // Extract material limits from tables
-      const extractedMaterials = rawMaterialVerificationService.extractMaterialLimitsFromTable(
-        tables,
-        formFields,
-        rawText
-      );
-
-      if (extractedMaterials.length === 0) {
-        return res.status(400).json({ 
-          error: "No material limits could be extracted from the document",
-          details: "Please ensure the document contains a table with material codes, quantities, and tolerances"
-        });
-      }
-
-      // Delete existing limits for this MPC and insert new ones
-      await storage.deleteRawMaterialLimitsByMpc(mpcNumber);
-      const insertRecords = rawMaterialVerificationService.convertLimitsToInsertRecords(
-        extractedMaterials,
-        mpcNumber,
-        productName
-      );
-      const savedLimits = await storage.createRawMaterialLimits(insertRecords);
-
-      res.json({
-        success: true,
-        mpcNumber,
-        productName,
-        materialsExtracted: savedLimits.length,
-        materials: savedLimits
-      });
-    } catch (error: any) {
-      console.error("Raw material limits upload error:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Get all stored material limits
-  app.get("/api/raw-material/limits", async (_req, res) => {
-    try {
-      const limits = await storage.getAllRawMaterialLimits();
-      res.json(limits);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Get material limits by MPC number
-  app.get("/api/raw-material/limits/:mpcNumber", async (req, res) => {
-    try {
-      const limits = await storage.getRawMaterialLimitsByMpc(req.params.mpcNumber);
-      res.json(limits);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Delete material limits by MPC number
-  app.delete("/api/raw-material/limits/:mpcNumber", async (req, res) => {
-    try {
-      const deleted = await storage.deleteRawMaterialLimitsByMpc(req.params.mpcNumber);
-      if (!deleted) {
-        return res.status(404).json({ error: "No limits found for this MPC" });
-      }
-      res.json({ success: true });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Upload batch record to verify material quantities against stored limits
-  app.post("/api/raw-material/verify", upload.single("file"), async (req, res) => {
-    try {
-      if (!req.file) {
-        return res.status(400).json({ error: "No file uploaded" });
-      }
-
-      const { mpcNumber, bmrNumber } = req.body;
-      if (!mpcNumber) {
-        return res.status(400).json({ error: "MPC number is required to verify against stored limits" });
-      }
-
-      // Get the stored limits for this MPC
-      const limits = await storage.getRawMaterialLimitsByMpc(mpcNumber);
-      if (limits.length === 0) {
-        return res.status(400).json({ 
-          error: "No material limits found for this MPC",
-          details: "Please upload the BoM/MPC document first to establish limits"
-        });
       }
 
       // Create verification record
       const verification = await storage.createRawMaterialVerification({
-        mpcNumber,
-        bmrNumber: bmrNumber || null,
+        mpcNumber: "auto-detected",
+        bmrNumber: null,
         filename: req.file.originalname,
         fileSize: req.file.size,
         status: "processing",
       });
 
-      // Process the batch record document
-      const pdfBuffer = req.file.buffer;
-      let tables: any[] = [];
-      let formFields: any[] = [];
-      let rawText = "";
-
-      if (documentAI) {
-        try {
-          const document = await documentAI.processDocument(pdfBuffer);
-          const totalPages = documentAI.getTotalPages(document);
-          
-          // Extract tables and form fields from all pages
-          for (let i = 0; i < totalPages; i++) {
-            const pageData = documentAI.extractPageData(document, i);
-            if (pageData) {
-              tables.push(...(pageData.tables || []));
-              formFields.push(...(pageData.formFields || []));
-              rawText += (pageData.extractedText || "") + "\n";
-            }
-          }
-          console.log(`[RAW-MATERIAL-VERIFY] Document AI extracted ${tables.length} tables from ${totalPages} pages`);
-        } catch (err: any) {
-          console.warn(`[RAW-MATERIAL-VERIFY] Document AI failed: ${err.message}`);
-          await storage.updateRawMaterialVerification(verification.id, {
-            status: "failed",
-            errorMessage: `Document processing failed: ${err.message}`
-          });
-          return res.status(500).json({ error: `Document processing failed: ${err.message}` });
-        }
-      } else {
+      if (!documentAI) {
         await storage.updateRawMaterialVerification(verification.id, {
           status: "failed",
           errorMessage: "Document AI is not configured"
@@ -1437,48 +1286,140 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).json({ error: "Document AI is not configured for document processing" });
       }
 
-      // Extract actual quantities from the batch record
-      const actualQuantities = rawMaterialVerificationService.extractActualQuantitiesFromTable(
-        tables,
-        formFields,
-        rawText
+      // Process the PDF document
+      const pdfBuffer = req.file.buffer;
+      const document = await documentAI.processDocument(pdfBuffer);
+      const totalPages = documentAI.getTotalPages(document);
+
+      if (totalPages < 2) {
+        await storage.updateRawMaterialVerification(verification.id, {
+          status: "failed",
+          errorMessage: "PDF must contain at least 2 pages (limits page and verification page)"
+        });
+        return res.status(400).json({ 
+          error: "PDF must contain at least 2 pages",
+          details: "Upload a PDF with one page containing material limits and another with actual values"
+        });
+      }
+
+      // Extract data from each page
+      const pagesData: { pageNumber: number; tables: any[]; rawText: string }[] = [];
+      for (let i = 0; i < totalPages; i++) {
+        const pageData = documentAI.extractPageData(document, i);
+        pagesData.push({
+          pageNumber: i + 1,
+          tables: pageData?.tables || [],
+          rawText: pageData?.extractedText || ""
+        });
+      }
+
+      console.log(`[RAW-MATERIAL] Processed ${totalPages} pages`);
+
+      // Classify pages to identify limits vs verification
+      const classifications = rawMaterialVerificationService.classifyPages(
+        pagesData.map(p => ({ pageNumber: p.pageNumber, rawText: p.rawText }))
       );
 
-      // Validate quantities against limits
-      const validationResults = rawMaterialVerificationService.validateMaterialQuantities(
-        limits,
-        actualQuantities
+      const limitsPage = classifications.find(c => c.pageType === "limits");
+      const verificationPage = classifications.find(c => c.pageType === "verification");
+
+      if (!limitsPage) {
+        // Default: first page is limits
+        classifications[0].pageType = "limits";
+      }
+      if (!verificationPage && totalPages > 1) {
+        // Default: second page is verification
+        const nonLimitsPage = classifications.find(c => c.pageType !== "limits");
+        if (nonLimitsPage) nonLimitsPage.pageType = "verification";
+        else classifications[1].pageType = "verification";
+      }
+
+      const limitsPageData = pagesData.find(p => 
+        classifications.find(c => c.pageNumber === p.pageNumber && c.pageType === "limits")
       );
+      const verificationPageData = pagesData.find(p => 
+        classifications.find(c => c.pageNumber === p.pageNumber && c.pageType === "verification")
+      );
+
+      if (!limitsPageData || !verificationPageData) {
+        await storage.updateRawMaterialVerification(verification.id, {
+          status: "failed",
+          errorMessage: "Could not identify limits and verification pages"
+        });
+        return res.status(400).json({ 
+          error: "Could not identify limits and verification pages",
+          details: "Ensure the PDF has a page with material limits (ranges) and a page with actual values"
+        });
+      }
+
+      // Extract limits from limits page
+      const limits = rawMaterialVerificationService.extractLimitsFromPage(
+        limitsPageData.tables,
+        limitsPageData.rawText
+      );
+
+      if (limits.length === 0) {
+        await storage.updateRawMaterialVerification(verification.id, {
+          status: "failed",
+          errorMessage: "No material limits could be extracted from the limits page"
+        });
+        return res.status(400).json({ 
+          error: "No material limits found",
+          details: "The limits page should contain a table with material codes and min/max ranges"
+        });
+      }
+
+      // Extract actual values from verification page
+      const actuals = rawMaterialVerificationService.extractActualsFromPage(
+        verificationPageData.tables,
+        verificationPageData.rawText
+      );
+
+      // Compare limits against actuals
+      const results = rawMaterialVerificationService.compareAndValidate(limits, actuals);
 
       // Store results
-      const resultRecords = rawMaterialVerificationService.convertResultsToInsertRecords(
-        validationResults,
-        verification.id
-      );
-      await storage.createRawMaterialResults(resultRecords);
+      for (const result of results) {
+        await storage.createRawMaterialResult({
+          verificationId: verification.id,
+          materialCode: result.materialCode,
+          materialName: result.materialName,
+          bomQuantity: result.limitRange,
+          actualQuantity: result.actualDisplay,
+          actualQuantityValue: result.actualValue ? Math.round(result.actualValue * 100) : null,
+          withinLimits: result.withinLimits,
+          toleranceDisplay: result.limitRange,
+          criticality: "non-critical",
+          deviationPercent: null,
+          notes: result.notes,
+        });
+      }
 
       // Calculate summary
-      const materialsWithinLimits = validationResults.filter(r => r.withinLimits === true).length;
-      const materialsOutOfLimits = validationResults.filter(r => r.withinLimits === false).length;
+      const materialsWithinLimits = results.filter(r => r.withinLimits === true).length;
+      const materialsOutOfLimits = results.filter(r => r.withinLimits === false).length;
 
       // Update verification record
       await storage.updateRawMaterialVerification(verification.id, {
         status: "completed",
         completedAt: new Date(),
-        totalMaterials: validationResults.length,
+        totalMaterials: results.length,
         materialsWithinLimits,
         materialsOutOfLimits,
       });
 
       res.json({
         verificationId: verification.id,
-        mpcNumber,
-        bmrNumber,
         status: "completed",
-        totalMaterials: validationResults.length,
+        limitsPage: limitsPageData.pageNumber,
+        verificationPage: verificationPageData.pageNumber,
+        limitsExtracted: limits.length,
+        actualsExtracted: actuals.length,
+        totalMaterials: results.length,
         materialsWithinLimits,
         materialsOutOfLimits,
-        results: validationResults
+        results,
+        pageClassifications: classifications
       });
     } catch (error: any) {
       console.error("Raw material verification error:", error);
