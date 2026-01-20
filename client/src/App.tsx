@@ -14,6 +14,7 @@ import Processing from "@/pages/processing";
 import Settings from "@/pages/settings";
 import BMRVerification from "@/pages/bmr-verification";
 import RawMaterialVerification from "@/pages/raw-material-verification";
+import BatchAllocationVerification from "@/pages/batch-allocation-verification";
 
 function Router() {
   return (
@@ -25,6 +26,7 @@ function Router() {
       <Route path="/settings" component={Settings} />
       <Route path="/bmr-verification" component={BMRVerification} />
       <Route path="/raw-material" component={RawMaterialVerification} />
+      <Route path="/batch-allocation" component={BatchAllocationVerification} />
       <Route component={NotFound} />
     </Switch>
   );
