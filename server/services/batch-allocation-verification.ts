@@ -93,6 +93,9 @@ export class BatchAllocationVerificationService {
 
   private extractManufacturingDate(text: string): string | null {
     const patterns = [
+      /Manufacturing\s*Date\s+(\d{4}[-\/]\d{2}[-\/]\d{2})/i,
+      /Manufacturing\s*Date[:\s]+(\d{4}[-\/]\d{2}[-\/]\d{2})/i,
+      /Mfg\.?\s*Date[:\s]*(\d{4}[-\/]\d{2}[-\/]\d{2})/i,
       /Mfg\.?\s*Date[:\s]*(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i,
       /Manufacturing\s*Date[:\s]*(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i,
       /Date\s*of\s*Manufacture[:\s]*(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i,
@@ -108,6 +111,9 @@ export class BatchAllocationVerificationService {
 
   private extractExpiryDate(text: string): string | null {
     const patterns = [
+      /Expiry\s*Date\s+(\d{4}[-\/]\d{2}[-\/]\d{2})/i,
+      /Expiry\s*Date[:\s]+(\d{4}[-\/]\d{2}[-\/]\d{2})/i,
+      /Exp\.?\s*Date[:\s]*(\d{4}[-\/]\d{2}[-\/]\d{2})/i,
       /Exp\.?\s*Date[:\s]*(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i,
       /Expiry\s*Date[:\s]*(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i,
       /Date\s*of\s*Expiry[:\s]*(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i,
@@ -123,15 +129,20 @@ export class BatchAllocationVerificationService {
 
   private extractComplianceStatus(text: string): boolean | null {
     const compliantPatterns = [
+      /Overall\s*Compliance\s+COMPLIANT/i,
+      /Overall\s*Compliance[:\s]+COMPLIANT/i,
       /Compliant\s*[\u2611\u2713\u2714✓☑]/i,
       /[\u2611\u2713\u2714✓☑]\s*Compliant/i,
       /Batch\s*Allocation\s*Log\s*Verified.*?Compliant/i,
       /is\s*correct\s*and\s*shelf\s*life\s*is\s*matching/i,
+      /\bCOMPLIANT\b/,
     ];
     
     const nonCompliantPatterns = [
+      /Overall\s*Compliance\s+NON[-\s]?COMPLIANT/i,
       /Non[-\s]?Compliant\s*[\u2611\u2713\u2714✓☑]/i,
       /[\u2611\u2713\u2714✓☑]\s*Non[-\s]?Compliant/i,
+      /\bNON[-\s]?COMPLIANT\b/i,
     ];
 
     for (const pattern of nonCompliantPatterns) {
@@ -147,8 +158,9 @@ export class BatchAllocationVerificationService {
 
   private extractQaOfficer(text: string): string | null {
     const patterns = [
+      /Verified\s*By[:\s]*QA\s*Officer\s*[–\-]\s*([A-Za-z\s]+?)(?:Verification|Date|\d{4})/i,
       /Verified\s*By[:\s]*([A-Za-z\s]+?)(?:QA|Date|\d)/i,
-      /QA\s*Officer[:\s]*([A-Za-z\s]+?)(?:\d|Date)/i,
+      /QA\s*Officer[:\s–\-]*([A-Za-z\s]+?)(?:\d|Date|Verification)/i,
     ];
     
     for (const pattern of patterns) {
@@ -163,6 +175,8 @@ export class BatchAllocationVerificationService {
 
   private extractVerificationDate(text: string): string | null {
     const patterns = [
+      /Verification\s*Date[:\s]+(\d{4}[-\/]\d{2}[-\/]\d{2})/i,
+      /Verification\s*Date\s+(\d{4}[-\/]\d{2}[-\/]\d{2})/i,
       /Verified.*?Date[:\s]*(\d{4}[-\/]\d{2}[-\/]\d{2})/i,
       /QA\s*Officer.*?(\d{4}[-\/]\d{2}[-\/]\d{2})/i,
       /Date[:\s]*(\d{4}[-\/]\d{2}[-\/]\d{2}).*?(?:Page|Confidential)/i,
