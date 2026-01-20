@@ -12,6 +12,7 @@ import { ValidationEngine } from "./services/validation-engine";
 import { VisualAnalyzer } from "./services/visual-analyzer";
 import { bmrVerificationService } from "./services/bmr-verification";
 import { rawMaterialVerificationService } from "./services/raw-material-verification";
+import { batchAllocationVerificationService } from "./services/batch-allocation-verification";
 
 // Use PostgreSQL database storage for persistence
 const storage = new DBStorage();
@@ -1473,6 +1474,123 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/raw-material/verifications/:id", async (req, res) => {
     try {
       const deleted = await storage.deleteRawMaterialVerification(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ error: "Verification not found" });
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==========================================
+  // Batch Allocation Verification Endpoints
+  // ==========================================
+
+  // Upload and verify batch allocation document
+  app.post("/api/batch-allocation/upload", upload.single("file"), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+
+      // Create verification record
+      const verification = await storage.createBatchAllocationVerification({
+        filename: req.file.originalname,
+        fileSize: req.file.size,
+        status: "processing",
+      });
+
+      if (!documentAI) {
+        await storage.updateBatchAllocationVerification(verification.id, {
+          status: "failed",
+          errorMessage: "Document AI is not configured for document processing"
+        });
+        return res.status(500).json({ error: "Document AI is not configured for document processing" });
+      }
+
+      // Process the document
+      const pdfBuffer = req.file.buffer;
+      const document = await documentAI.processDocument(pdfBuffer);
+      const totalPages = documentAI.getTotalPages(document);
+
+      // Extract data from all pages
+      let allText = "";
+      const allTables: any[] = [];
+      
+      for (let i = 0; i < totalPages; i++) {
+        const pageData = documentAI.extractPageData(document, i);
+        allText += (pageData?.extractedText || "") + "\n";
+        if (pageData?.tables) {
+          allTables.push(...pageData.tables);
+        }
+      }
+
+      console.log(`[BATCH-ALLOCATION] Processed ${totalPages} pages, text length: ${allText.length}`);
+
+      // Extract batch allocation data
+      const extraction = batchAllocationVerificationService.extractFromDocument(allText, allTables);
+
+      // Update verification with extracted data
+      await storage.updateBatchAllocationVerification(verification.id, {
+        status: "completed",
+        completedAt: new Date(),
+        batchNumber: extraction.batchNumber,
+        mpcNumber: extraction.mpcNumber,
+        bmrNumber: extraction.bmrNumber,
+        manufacturingDate: extraction.manufacturingDate,
+        expiryDate: extraction.expiryDate,
+        shelfLifeMonths: extraction.shelfLifeMonths,
+        shelfLifeCalculated: extraction.shelfLifeCalculated,
+        isCompliant: extraction.isCompliant,
+        datesMatch: extraction.datesMatch,
+        qaOfficer: extraction.qaOfficer,
+        verificationDate: extraction.verificationDate,
+        extractedData: {
+          rawMaterials: extraction.rawMaterials,
+          totalPages,
+        },
+      });
+
+      res.json({
+        verificationId: verification.id,
+        status: "completed",
+        ...extraction,
+        totalPages,
+      });
+    } catch (error: any) {
+      console.error("Batch allocation verification error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get all batch allocation verifications
+  app.get("/api/batch-allocation/verifications", async (_req, res) => {
+    try {
+      const verifications = await storage.getAllBatchAllocationVerifications();
+      res.json(verifications);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get batch allocation verification by ID
+  app.get("/api/batch-allocation/verifications/:id", async (req, res) => {
+    try {
+      const verification = await storage.getBatchAllocationVerification(req.params.id);
+      if (!verification) {
+        return res.status(404).json({ error: "Verification not found" });
+      }
+      res.json(verification);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Delete batch allocation verification
+  app.delete("/api/batch-allocation/verifications/:id", async (req, res) => {
+    try {
+      const deleted = await storage.deleteBatchAllocationVerification(req.params.id);
       if (!deleted) {
         return res.status(404).json({ error: "Verification not found" });
       }
