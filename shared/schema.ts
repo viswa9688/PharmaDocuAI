@@ -490,3 +490,51 @@ export type RawMaterialVerificationResult = {
   results: RawMaterialResult[];
   limits: RawMaterialLimit[];
 };
+
+// ==========================================
+// BATCH ALLOCATION VERIFICATION TYPES
+// ==========================================
+
+// Batch Allocation Verification - validates Mfg/Exp dates and shelf life matching
+export const batchAllocationVerifications = pgTable("batch_allocation_verifications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  filename: text("filename").notNull(),
+  fileSize: integer("file_size").notNull(),
+  status: text("status").notNull().default("pending"),  // pending, processing, completed, failed
+  uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
+  completedAt: timestamp("completed_at"),
+  
+  // Extracted data
+  batchNumber: text("batch_number"),
+  mpcNumber: text("mpc_number"),
+  bmrNumber: text("bmr_number"),
+  manufacturingDate: text("manufacturing_date"),
+  expiryDate: text("expiry_date"),
+  shelfLifeMonths: integer("shelf_life_months"),
+  shelfLifeCalculated: integer("shelf_life_calculated"),  // Calculated from dates
+  
+  // Compliance status
+  isCompliant: boolean("is_compliant"),  // From checkbox on document
+  datesMatch: boolean("dates_match"),  // Mfg + shelf life = Exp
+  
+  // Verification details
+  qaOfficer: text("qa_officer"),
+  verificationDate: text("verification_date"),
+  
+  // Additional metadata
+  extractedData: jsonb("extracted_data").$type<Record<string, any>>(),
+  errorMessage: text("error_message"),
+});
+
+// Insert schema for batch allocation verification
+export const insertBatchAllocationVerificationSchema = createInsertSchema(batchAllocationVerifications).omit({
+  id: true,
+  uploadedAt: true,
+  completedAt: true,
+  extractedData: true,
+  errorMessage: true,
+});
+
+// Types for batch allocation verification
+export type BatchAllocationVerification = typeof batchAllocationVerifications.$inferSelect;
+export type InsertBatchAllocationVerification = z.infer<typeof insertBatchAllocationVerificationSchema>;

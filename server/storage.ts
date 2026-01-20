@@ -15,7 +15,9 @@ import type {
   RawMaterialVerification,
   InsertRawMaterialVerification,
   RawMaterialResult,
-  InsertRawMaterialResult
+  InsertRawMaterialResult,
+  BatchAllocationVerification,
+  InsertBatchAllocationVerification
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -69,6 +71,13 @@ export interface IStorage {
   createRawMaterialResult(result: InsertRawMaterialResult): Promise<RawMaterialResult>;
   createRawMaterialResults(results: InsertRawMaterialResult[]): Promise<RawMaterialResult[]>;
   getRawMaterialResultsByVerification(verificationId: string): Promise<RawMaterialResult[]>;
+
+  // Batch Allocation Verifications
+  createBatchAllocationVerification(verification: InsertBatchAllocationVerification): Promise<BatchAllocationVerification>;
+  getBatchAllocationVerification(id: string): Promise<BatchAllocationVerification | undefined>;
+  getAllBatchAllocationVerifications(): Promise<BatchAllocationVerification[]>;
+  updateBatchAllocationVerification(id: string, updates: Partial<BatchAllocationVerification>): Promise<BatchAllocationVerification | undefined>;
+  deleteBatchAllocationVerification(id: string): Promise<boolean>;
 }
 
 export class MemStorage implements IStorage {
@@ -80,6 +89,7 @@ export class MemStorage implements IStorage {
   private rawMaterialLimitsMap: Map<string, RawMaterialLimit>;
   private rawMaterialVerificationsMap: Map<string, RawMaterialVerification>;
   private rawMaterialResultsMap: Map<string, RawMaterialResult>;
+  private batchAllocationVerificationsMap: Map<string, BatchAllocationVerification>;
 
   constructor() {
     this.documents = new Map();
@@ -90,6 +100,7 @@ export class MemStorage implements IStorage {
     this.rawMaterialLimitsMap = new Map();
     this.rawMaterialVerificationsMap = new Map();
     this.rawMaterialResultsMap = new Map();
+    this.batchAllocationVerificationsMap = new Map();
   }
 
   // Documents
@@ -403,6 +414,53 @@ export class MemStorage implements IStorage {
     return Array.from(this.rawMaterialResultsMap.values())
       .filter(r => r.verificationId === verificationId)
       .sort((a, b) => a.materialCode.localeCompare(b.materialCode));
+  }
+
+  // Batch Allocation Verifications
+  async createBatchAllocationVerification(insertVerification: InsertBatchAllocationVerification): Promise<BatchAllocationVerification> {
+    const id = randomUUID();
+    const verification: BatchAllocationVerification = {
+      ...insertVerification,
+      id,
+      uploadedAt: new Date(),
+      completedAt: null,
+      batchNumber: insertVerification.batchNumber || null,
+      mpcNumber: insertVerification.mpcNumber || null,
+      bmrNumber: insertVerification.bmrNumber || null,
+      manufacturingDate: insertVerification.manufacturingDate || null,
+      expiryDate: insertVerification.expiryDate || null,
+      shelfLifeMonths: insertVerification.shelfLifeMonths || null,
+      shelfLifeCalculated: insertVerification.shelfLifeCalculated || null,
+      isCompliant: insertVerification.isCompliant || null,
+      datesMatch: insertVerification.datesMatch || null,
+      qaOfficer: insertVerification.qaOfficer || null,
+      verificationDate: insertVerification.verificationDate || null,
+      extractedData: null,
+      errorMessage: null,
+    };
+    this.batchAllocationVerificationsMap.set(id, verification);
+    return verification;
+  }
+
+  async getBatchAllocationVerification(id: string): Promise<BatchAllocationVerification | undefined> {
+    return this.batchAllocationVerificationsMap.get(id);
+  }
+
+  async getAllBatchAllocationVerifications(): Promise<BatchAllocationVerification[]> {
+    return Array.from(this.batchAllocationVerificationsMap.values())
+      .sort((a, b) => b.uploadedAt.getTime() - a.uploadedAt.getTime());
+  }
+
+  async updateBatchAllocationVerification(id: string, updates: Partial<BatchAllocationVerification>): Promise<BatchAllocationVerification | undefined> {
+    const verification = this.batchAllocationVerificationsMap.get(id);
+    if (!verification) return undefined;
+    const updated = { ...verification, ...updates };
+    this.batchAllocationVerificationsMap.set(id, updated);
+    return updated;
+  }
+
+  async deleteBatchAllocationVerification(id: string): Promise<boolean> {
+    return this.batchAllocationVerificationsMap.delete(id);
   }
 }
 
