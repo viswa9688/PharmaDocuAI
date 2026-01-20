@@ -8,6 +8,7 @@ import {
   rawMaterialLimits,
   rawMaterialVerifications,
   rawMaterialResults,
+  batchAllocationVerifications,
   type Document,
   type InsertDocument,
   type Page,
@@ -25,6 +26,8 @@ import {
   type InsertRawMaterialVerification,
   type RawMaterialResult,
   type InsertRawMaterialResult,
+  type BatchAllocationVerification,
+  type InsertBatchAllocationVerification,
 } from "@shared/schema";
 import { eq, desc, and } from "drizzle-orm";
 import type { IStorage } from "./storage";
@@ -258,6 +261,35 @@ export class DBStorage implements IStorage {
       .from(rawMaterialResults)
       .where(eq(rawMaterialResults.verificationId, verificationId))
       .orderBy(rawMaterialResults.materialCode);
+  }
+
+  // Batch Allocation Verifications
+  async createBatchAllocationVerification(insertVerification: InsertBatchAllocationVerification): Promise<BatchAllocationVerification> {
+    const [verification] = await db.insert(batchAllocationVerifications).values(insertVerification).returning();
+    return verification;
+  }
+
+  async getBatchAllocationVerification(id: string): Promise<BatchAllocationVerification | undefined> {
+    const [verification] = await db.select().from(batchAllocationVerifications).where(eq(batchAllocationVerifications.id, id));
+    return verification;
+  }
+
+  async getAllBatchAllocationVerifications(): Promise<BatchAllocationVerification[]> {
+    return db.select().from(batchAllocationVerifications).orderBy(desc(batchAllocationVerifications.uploadedAt));
+  }
+
+  async updateBatchAllocationVerification(id: string, updates: Partial<BatchAllocationVerification>): Promise<BatchAllocationVerification | undefined> {
+    const [updated] = await db
+      .update(batchAllocationVerifications)
+      .set(updates)
+      .where(eq(batchAllocationVerifications.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteBatchAllocationVerification(id: string): Promise<boolean> {
+    const result = await db.delete(batchAllocationVerifications).where(eq(batchAllocationVerifications.id, id));
+    return result.rowCount !== null && result.rowCount > 0;
   }
 }
 

@@ -72,6 +72,19 @@ The system is built on a React, Express, PostgreSQL, and TypeScript stack.
 - **Discrepancy Severity**: Critical (product name/code), Major (batch size, ingredients), Minor (descriptions, locations)
 - **Storage**: `bmrVerifications` table for sessions, `bmrDiscrepancies` table for detected issues
 
+### Batch Allocation Verification Feature
+- **Purpose**: Validates Manufacturing/Expiry dates and shelf life calculations from Batch Allocation Log documents
+- **Workflow**: Upload PDF → Extract dates, batch number, BMR/MPC numbers → Calculate shelf life → Verify compliance status
+- **Key Extractions**:
+  - Batch Number, MPC Number, BMR Number
+  - Manufacturing Date (Mfg Date)
+  - Expiry Date (Exp Date)
+  - QA Officer and Verification Date
+  - Compliance status from document checkboxes/text
+- **Shelf Life Calculation**: Automatically calculates shelf life in months from Mfg Date to Exp Date
+- **Validation**: Flags whether dates match and calculated shelf life is valid (positive months)
+- **Storage**: `batchAllocationVerifications` table with all extracted fields and JSONB for additional data
+
 ## External Dependencies
 - **Google Cloud Platform**:
     - **Google Document AI**: For advanced document parsing and data extraction.
