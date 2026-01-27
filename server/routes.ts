@@ -13,9 +13,38 @@ import { VisualAnalyzer } from "./services/visual-analyzer";
 import { bmrVerificationService } from "./services/bmr-verification";
 import { rawMaterialVerificationService } from "./services/raw-material-verification";
 import { batchAllocationVerificationService } from "./services/batch-allocation-verification";
+import { setupAuth, isAuthenticated } from "./replitAuth";
+import type { ProcessingEventType } from "@shared/schema";
 
 // Use PostgreSQL database storage for persistence
 const storage = new DBStorage();
+
+// Audit trail helper
+async function logEvent(
+  eventType: ProcessingEventType,
+  status: "pending" | "success" | "failed",
+  options: {
+    documentId?: string | null;
+    pageId?: string | null;
+    userId?: string | null;
+    errorMessage?: string | null;
+    metadata?: Record<string, any>;
+  } = {}
+) {
+  try {
+    await storage.createProcessingEvent({
+      eventType,
+      status,
+      documentId: options.documentId ?? null,
+      pageId: options.pageId ?? null,
+      userId: options.userId ?? null,
+      errorMessage: options.errorMessage ?? null,
+      metadata: options.metadata || {},
+    });
+  } catch (err) {
+    console.error("Failed to log processing event:", err);
+  }
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -25,6 +54,9 @@ const upload = multer({
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Setup authentication
+  await setupAuth(app);
+
   const documentAI = createDocumentAIService();
   const classifier = createClassifierService();
   const pdfProcessor = createPDFProcessorService();
@@ -32,6 +64,195 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const signatureAnalyzer = new SignatureAnalyzer();
   const validationEngine = new ValidationEngine();
   const visualAnalyzer = new VisualAnalyzer('uploads/thumbnails');
+
+  // Auth routes - returns user if authenticated, null if not
+  app.get('/api/auth/user', async (req: any, res) => {
+    try {
+      if (!req.isAuthenticated || !req.isAuthenticated() || !req.user?.claims?.sub) {
+        return res.json(null);
+      }
+      const userId = req.user.claims.sub;
+      const user = await storage.getUser(userId);
+      res.json(user || null);
+    } catch (error) {
+      console.error("Error fetching user:", error);
+      res.json(null);
+    }
+  });
+
+  // Get processing events for a document (audit trail)
+  app.get("/api/documents/:id/events", async (req, res) => {
+    try {
+      const events = await storage.getEventsByDocument(req.params.id);
+      res.json(events);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get all recent processing events with user info
+  app.get("/api/events/recent", async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 100;
+      const events = await storage.getRecentEvents(limit);
+      
+      // Attach user info to each event
+      const eventsWithUsers = await Promise.all(
+        events.map(async (event) => {
+          let user = null;
+          if (event.userId) {
+            user = await storage.getUser(event.userId);
+          }
+          return { ...event, user };
+        })
+      );
+      
+      res.json(eventsWithUsers);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get failed processing events
+  app.get("/api/events/failed", async (req, res) => {
+    try {
+      const events = await storage.getFailedEvents();
+      res.json(events);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get user info by ID
+  app.get("/api/users/:id", async (req, res) => {
+    try {
+      const user = await storage.getUser(req.params.id);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.json({
+        id: user.id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        profileImageUrl: user.profileImageUrl,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Dashboard summary endpoint
+  app.get("/api/dashboard/summary", async (_req, res) => {
+    try {
+      const documents = await storage.getAllDocuments();
+      const completedDocs = documents.filter(d => d.status === "completed");
+      
+      // Initialize category metrics
+      const categories = {
+        signatures: { passed: 0, failed: 0, total: 0 },
+        dataIntegrity: { passed: 0, failed: 0, total: 0 },
+        calculations: { passed: 0, failed: 0, total: 0 },
+        dates: { passed: 0, failed: 0, total: 0 },
+        batchNumbers: { passed: 0, failed: 0, total: 0 },
+        pageCompleteness: { passed: 0, failed: 0, total: 0 },
+      };
+      
+      let totalPages = 0;
+      let totalAlerts = 0;
+      let documentsWithIssues = 0;
+      
+      for (const doc of completedDocs) {
+        const pages = await storage.getPagesByDocument(doc.id);
+        totalPages += pages.length;
+        
+        let docHasIssues = false;
+        
+        for (const page of pages) {
+          const result = await validationEngine.validatePage(
+            page.pageNumber,
+            page.metadata || {},
+            page.classification,
+            page.extractedText || ""
+          );
+          
+          const metadata = page.metadata as Record<string, any> || {};
+          
+          // Add visual anomaly alerts
+          if (metadata.visualAnomalies && Array.isArray(metadata.visualAnomalies) && metadata.visualAnomalies.length > 0) {
+            const visualAlerts = validationEngine.createVisualAnomalyAlerts(metadata.visualAnomalies);
+            result.alerts.push(...visualAlerts);
+          }
+          
+          // Run signature analysis
+          let signatureFields: any[] | null = null;
+          if (metadata.extraction) {
+            try {
+              const approvalAnalysis = signatureAnalyzer.analyze({
+                tables: metadata.extraction.tables,
+                handwrittenRegions: metadata.extraction.handwrittenRegions,
+                signatures: metadata.extraction.signatures,
+                formFields: metadata.extraction.formFields,
+                textBlocks: metadata.extraction.textBlocks || metadata.layoutAnalysis?.textBlocks,
+              });
+              signatureFields = approvalAnalysis.signatureFields;
+            } catch (err) {
+              signatureFields = metadata.approvals?.signatureFields || null;
+            }
+          } else {
+            signatureFields = metadata.approvals?.signatureFields || null;
+          }
+          
+          // Count signature fields
+          if (signatureFields && Array.isArray(signatureFields)) {
+            const missingSignatures = signatureFields.filter((f: any) => !f.isSigned);
+            const signedFields = signatureFields.filter((f: any) => f.isSigned);
+            
+            categories.signatures.total += signatureFields.length;
+            categories.signatures.passed += signedFields.length;
+            categories.signatures.failed += missingSignatures.length;
+            
+            if (missingSignatures.length > 0) docHasIssues = true;
+          }
+          
+          // Count alerts by category
+          for (const alert of result.alerts) {
+            totalAlerts++;
+            docHasIssues = true;
+            
+            if (alert.category === "data_quality") {
+              categories.dataIntegrity.total++;
+              categories.dataIntegrity.failed++;
+            } else if (alert.category === "range_violation" || alert.category === "unit_mismatch") {
+              categories.calculations.total++;
+              categories.calculations.failed++;
+            } else if (alert.category === "format_error") {
+              categories.dates.total++;
+              categories.dates.failed++;
+            } else if (alert.category === "sequence_error" || alert.category === "consistency_error") {
+              categories.batchNumbers.total++;
+              categories.batchNumbers.failed++;
+            }
+          }
+        }
+        
+        if (docHasIssues) documentsWithIssues++;
+      }
+      
+      res.json({
+        totalDocuments: documents.length,
+        completedDocuments: completedDocs.length,
+        approvedDocuments: documents.filter(d => d.isApproved).length,
+        documentsWithIssues,
+        totalPages,
+        totalAlerts,
+        categories,
+        recentActivity: await storage.getRecentEvents(10),
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
 
   // Upload and process document
   app.post("/api/documents/upload", upload.single("file"), async (req, res) => {
@@ -51,11 +272,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: "pending",
       });
 
+      // Log upload event
+      await logEvent("document_upload", "success", {
+        documentId: doc.id,
+        metadata: {
+          filename: req.file.originalname,
+          fileSize: req.file.size,
+        },
+      });
+
       // Start processing asynchronously
       processDocument(doc.id, req.file.buffer).catch(error => {
         console.error("Error processing document:", error);
         storage.updateDocument(doc.id, {
           status: "failed",
+          errorMessage: error.message,
+        });
+        logEvent("processing_failed", "failed", {
+          documentId: doc.id,
           errorMessage: error.message,
         });
       });
@@ -968,10 +1202,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       await storage.updateDocument(documentId, { status: "completed" });
+      
+      // Log processing completion
+      await logEvent("processing_complete", "success", {
+        documentId,
+        metadata: {
+          totalPages: processedPages.length,
+          usedFallback,
+          fallbackReason: usedFallback ? fallbackReason : undefined,
+        },
+      });
     } catch (error: any) {
       console.error("Processing error:", error);
       await storage.updateDocument(documentId, {
         status: "failed",
+        errorMessage: error.message,
+      });
+      
+      // Log processing failure
+      await logEvent("processing_failed", "failed", {
+        documentId,
         errorMessage: error.message,
       });
       throw error;
@@ -1595,6 +1845,152 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Verification not found" });
       }
       res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==========================================
+  // Document Approval Endpoints
+  // ==========================================
+
+  // Approve/disapprove document
+  app.patch("/api/documents/:id/approve", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub || null;
+      const documentId = req.params.id;
+      const { isApproved } = req.body;
+      
+      if (typeof isApproved !== "boolean") {
+        return res.status(400).json({ error: "isApproved must be a boolean" });
+      }
+      
+      const doc = await storage.getDocument(documentId);
+      if (!doc) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+      
+      const updates: any = {
+        isApproved,
+        approvedBy: isApproved ? userId : null,
+        approvedAt: isApproved ? new Date() : null,
+      };
+      
+      const updated = await storage.updateDocument(documentId, updates);
+      
+      await logEvent(isApproved ? "document_approved" : "document_unapproved", "success", {
+        documentId,
+        userId,
+        metadata: {
+          filename: doc.filename,
+          previousApprovalStatus: doc.isApproved,
+          newApprovalStatus: isApproved,
+        },
+      });
+      
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==========================================
+  // Issue Resolution Endpoints
+  // ==========================================
+
+  // Resolve an issue (approve or reject) with mandatory comment
+  app.post("/api/issues/:issueId/resolve", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ error: "User ID required" });
+      }
+      
+      const { issueId } = req.params;
+      const { status, comment } = req.body;
+      
+      if (!status || !["approved", "rejected"].includes(status)) {
+        return res.status(400).json({ error: "Status must be 'approved' or 'rejected'" });
+      }
+      
+      if (!comment || typeof comment !== "string" || comment.trim().length === 0) {
+        return res.status(400).json({ error: "Comment is required for issue resolution" });
+      }
+      
+      const issue = await storage.getQualityIssue(issueId);
+      if (!issue) {
+        return res.status(404).json({ error: "Issue not found" });
+      }
+      
+      const previousStatus = issue.resolutionStatus;
+      
+      const resolution = await storage.createIssueResolution({
+        issueId,
+        documentId: issue.documentId,
+        resolverId: userId,
+        status,
+        comment: comment.trim(),
+        previousStatus,
+      });
+      
+      const updatedIssue = await storage.updateQualityIssue(issueId, {
+        resolutionStatus: status,
+        resolvedBy: userId,
+        resolvedAt: new Date(),
+        resolutionComment: comment.trim(),
+        resolved: status === "approved",
+      });
+      
+      await logEvent(status === "approved" ? "issue_approved" : "issue_rejected", "success", {
+        documentId: issue.documentId,
+        userId,
+        metadata: {
+          issueId,
+          issueType: issue.issueType,
+          severity: issue.severity,
+          description: issue.description,
+          pageNumbers: issue.pageNumbers,
+          previousStatus,
+          newStatus: status,
+          comment: comment.trim(),
+        },
+      });
+      
+      res.json({
+        issue: updatedIssue,
+        resolution,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get resolution history for a specific issue
+  app.get("/api/issues/:issueId/resolutions", async (req, res) => {
+    try {
+      const { issueId } = req.params;
+      
+      const issue = await storage.getQualityIssue(issueId);
+      if (!issue) {
+        return res.status(404).json({ error: "Issue not found" });
+      }
+      
+      const resolutions = await storage.getIssueResolutions(issueId);
+      
+      res.json({
+        issue,
+        resolutions,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get issues with resolutions for a document
+  app.get("/api/documents/:id/issues-with-resolutions", async (req, res) => {
+    try {
+      const issuesWithResolutions = await storage.getIssuesWithResolutions(req.params.id);
+      res.json(issuesWithResolutions);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

@@ -1,7 +1,62 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, jsonb, integer, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, jsonb, integer, boolean, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+
+// ==========================================
+// AUTH TABLES (Required for Replit Auth)
+// ==========================================
+
+// Session storage table for Replit Auth
+export const sessions = pgTable(
+  "sessions",
+  {
+    sid: varchar("sid").primaryKey(),
+    sess: jsonb("sess").notNull(),
+    expire: timestamp("expire").notNull(),
+  },
+  (table) => [index("IDX_session_expire").on(table.expire)],
+);
+
+// User storage table for Replit Auth
+export const users = pgTable("users", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  email: varchar("email").unique(),
+  firstName: varchar("first_name"),
+  lastName: varchar("last_name"),
+  profileImageUrl: varchar("profile_image_url"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type UpsertUser = typeof users.$inferInsert;
+export type User = typeof users.$inferSelect;
+
+// ==========================================
+// AUDIT TRAIL - Processing Events
+// ==========================================
+
+// Event types for processing audit trail
+export const processingEventTypes = [
+  "document_upload",
+  "document_delete",
+  "image_conversion",
+  "document_ai_extraction",
+  "page_classification",
+  "validation",
+  "signature_analysis",
+  "visual_analysis",
+  "processing_complete",
+  "processing_failed",
+  "document_viewed",
+  "alert_acknowledged",
+  "document_approved",
+  "document_unapproved",
+  "issue_approved",
+  "issue_rejected",
+] as const;
+
+export type ProcessingEventType = typeof processingEventTypes[number];
 
 // Batch date bounds extracted from batch details page
 export type BatchDateBounds = {
@@ -21,13 +76,39 @@ export const documents = pgTable("documents", {
   filename: text("filename").notNull(),
   fileSize: integer("file_size").notNull(),
   uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
+  uploadedBy: varchar("uploaded_by").references(() => users.id, { onDelete: "set null" }),
   status: text("status").notNull().default("pending"), // pending, processing, completed, failed
   totalPages: integer("total_pages"),
   processedPages: integer("processed_pages").default(0),
   errorMessage: text("error_message"),
   // Batch date bounds for temporal validation
   batchDateBounds: jsonb("batch_date_bounds").$type<BatchDateBounds>(),
+  // Approval status for batch records
+  isApproved: boolean("is_approved").default(false).notNull(),
+  approvedBy: varchar("approved_by").references(() => users.id, { onDelete: "set null" }),
+  approvedAt: timestamp("approved_at"),
 });
+
+// Processing events table for audit trail
+export const processingEvents = pgTable("processing_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  documentId: varchar("document_id").references(() => documents.id, { onDelete: "cascade" }),
+  pageId: varchar("page_id").references(() => pages.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").references(() => users.id, { onDelete: "set null" }),
+  eventType: text("event_type").notNull(),
+  status: text("status").notNull().default("pending"), // pending, success, failed
+  errorMessage: text("error_message"),
+  metadata: jsonb("metadata").$type<Record<string, any>>().default({}),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertProcessingEventSchema = createInsertSchema(processingEvents).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type ProcessingEvent = typeof processingEvents.$inferSelect;
+export type InsertProcessingEvent = z.infer<typeof insertProcessingEventSchema>;
 
 // Page classifications
 export const pageTypes = [
@@ -57,6 +138,19 @@ export const pages = pgTable("pages", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// Issue resolution status enum
+export const issueResolutionStatuses = ["pending", "approved", "rejected"] as const;
+export type IssueResolutionStatus = typeof issueResolutionStatuses[number];
+
+// Issue location for highlighting on page images
+export type IssueLocation = {
+  pageNumber: number;
+  xPct: number;      // X position as percentage of page width (0-100)
+  yPct: number;      // Y position as percentage of page height (0-100)
+  widthPct: number;  // Width as percentage of page width
+  heightPct: number; // Height as percentage of page height
+};
+
 // Quality control issues
 export const qualityIssues = pgTable("quality_issues", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -65,17 +159,46 @@ export const qualityIssues = pgTable("quality_issues", {
   severity: text("severity").notNull(), // low, medium, high
   description: text("description").notNull(),
   pageNumbers: jsonb("page_numbers").$type<number[]>().default([]),
+  locations: jsonb("locations").$type<IssueLocation[]>().default([]), // Bounding box locations for highlighting
   resolved: boolean("resolved").default(false),
+  resolutionStatus: text("resolution_status").default("pending").notNull(), // pending, approved, rejected
+  resolvedBy: varchar("resolved_by").references(() => users.id, { onDelete: "set null" }),
+  resolvedAt: timestamp("resolved_at"),
+  resolutionComment: text("resolution_comment"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+// Issue resolutions history table - tracks all resolution actions with mandatory comments
+export const issueResolutions = pgTable("issue_resolutions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  issueId: varchar("issue_id").notNull().references(() => qualityIssues.id, { onDelete: "cascade" }),
+  documentId: varchar("document_id").notNull().references(() => documents.id, { onDelete: "cascade" }),
+  resolverId: varchar("resolver_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  status: text("status").notNull(), // approved, rejected
+  comment: text("comment").notNull(), // Mandatory comment for every resolution
+  previousStatus: text("previous_status"), // What status the issue was before this action
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertIssueResolutionSchema = createInsertSchema(issueResolutions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type IssueResolution = typeof issueResolutions.$inferSelect;
+export type InsertIssueResolution = z.infer<typeof insertIssueResolutionSchema>;
 
 // Insert schemas
 export const insertDocumentSchema = createInsertSchema(documents).omit({
   id: true,
   uploadedAt: true,
+  uploadedBy: true,
   totalPages: true,
   processedPages: true,
   errorMessage: true,
+  isApproved: true,
+  approvedBy: true,
+  approvedAt: true,
 });
 
 export const insertPageSchema = createInsertSchema(pages).omit({

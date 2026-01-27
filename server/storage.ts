@@ -17,13 +17,19 @@ import type {
   RawMaterialResult,
   InsertRawMaterialResult,
   BatchAllocationVerification,
-  InsertBatchAllocationVerification
+  InsertBatchAllocationVerification,
+  User,
+  UpsertUser,
+  ProcessingEvent,
+  InsertProcessingEvent,
+  IssueResolution,
+  InsertIssueResolution
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
 export interface IStorage {
   // Documents
-  createDocument(doc: InsertDocument): Promise<Document>;
+  createDocument(doc: InsertDocument, uploadedBy?: string | null): Promise<Document>;
   getDocument(id: string): Promise<Document | undefined>;
   getAllDocuments(): Promise<Document[]>;
   updateDocument(id: string, updates: Partial<Document>): Promise<Document | undefined>;
@@ -37,6 +43,26 @@ export interface IStorage {
   // Quality Issues
   createQualityIssue(issue: InsertQualityIssue): Promise<QualityIssue>;
   getIssuesByDocument(documentId: string): Promise<QualityIssue[]>;
+  getQualityIssue(id: string): Promise<QualityIssue | undefined>;
+  updateQualityIssue(id: string, updates: Partial<QualityIssue>): Promise<QualityIssue | undefined>;
+  deleteIssuesByDocument(documentId: string): Promise<number>;
+
+  // Issue Resolutions
+  createIssueResolution(resolution: InsertIssueResolution): Promise<IssueResolution>;
+  getIssueResolutions(issueId: string): Promise<IssueResolution[]>;
+  getDocumentIssueResolutions(documentId: string): Promise<IssueResolution[]>;
+  getIssuesWithResolutions(documentId: string): Promise<{ issue: QualityIssue; resolutions: IssueResolution[] }[]>;
+
+  // Users
+  getUser(id: string): Promise<User | undefined>;
+  upsertUser(userData: UpsertUser): Promise<User>;
+
+  // Processing Events (Audit Trail)
+  createProcessingEvent(event: InsertProcessingEvent): Promise<ProcessingEvent>;
+  getEventsByDocument(documentId: string): Promise<ProcessingEvent[]>;
+  getEventsByPage(pageId: string): Promise<ProcessingEvent[]>;
+  getRecentEvents(limit?: number): Promise<ProcessingEvent[]>;
+  getFailedEvents(): Promise<ProcessingEvent[]>;
 
   // Summary
   getDocumentSummary(documentId: string): Promise<DocumentSummary | undefined>;
@@ -90,6 +116,9 @@ export class MemStorage implements IStorage {
   private rawMaterialVerificationsMap: Map<string, RawMaterialVerification>;
   private rawMaterialResultsMap: Map<string, RawMaterialResult>;
   private batchAllocationVerificationsMap: Map<string, BatchAllocationVerification>;
+  private usersMap: Map<string, User>;
+  private processingEventsMap: Map<string, ProcessingEvent>;
+  private issueResolutionsMap: Map<string, IssueResolution>;
 
   constructor() {
     this.documents = new Map();
@@ -101,20 +130,27 @@ export class MemStorage implements IStorage {
     this.rawMaterialVerificationsMap = new Map();
     this.rawMaterialResultsMap = new Map();
     this.batchAllocationVerificationsMap = new Map();
+    this.usersMap = new Map();
+    this.processingEventsMap = new Map();
+    this.issueResolutionsMap = new Map();
   }
 
   // Documents
-  async createDocument(insertDoc: InsertDocument): Promise<Document> {
+  async createDocument(insertDoc: InsertDocument, uploadedBy?: string | null): Promise<Document> {
     const id = randomUUID();
     const doc: Document = {
       ...insertDoc,
       id,
       uploadedAt: new Date(),
+      uploadedBy: uploadedBy || null,
       status: insertDoc.status || "pending",
       totalPages: null,
       processedPages: 0,
       errorMessage: null,
       batchDateBounds: null,
+      isApproved: false,
+      approvedBy: null,
+      approvedAt: null,
     };
     this.documents.set(id, doc);
     return doc;
@@ -183,7 +219,12 @@ export class MemStorage implements IStorage {
       ...insertIssue,
       id,
       pageNumbers: (insertIssue.pageNumbers as number[]) || null,
+      locations: (insertIssue.locations as any[]) || null,
       resolved: false,
+      resolutionStatus: null,
+      resolvedBy: null,
+      resolvedAt: null,
+      resolutionComment: null,
       createdAt: new Date(),
     };
     this.qualityIssues.set(id, issue);
@@ -193,6 +234,139 @@ export class MemStorage implements IStorage {
   async getIssuesByDocument(documentId: string): Promise<QualityIssue[]> {
     return Array.from(this.qualityIssues.values())
       .filter(issue => issue.documentId === documentId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  async getQualityIssue(id: string): Promise<QualityIssue | undefined> {
+    return this.qualityIssues.get(id);
+  }
+
+  async updateQualityIssue(id: string, updates: Partial<QualityIssue>): Promise<QualityIssue | undefined> {
+    const issue = this.qualityIssues.get(id);
+    if (!issue) return undefined;
+
+    const updated = { ...issue, ...updates };
+    this.qualityIssues.set(id, updated);
+    return updated;
+  }
+
+  async deleteIssuesByDocument(documentId: string): Promise<number> {
+    const issues = await this.getIssuesByDocument(documentId);
+    issues.forEach(issue => {
+      this.qualityIssues.delete(issue.id);
+      Array.from(this.issueResolutionsMap.values())
+        .filter(r => r.issueId === issue.id)
+        .forEach(r => this.issueResolutionsMap.delete(r.id));
+    });
+    return issues.length;
+  }
+
+  // Issue Resolutions
+  async createIssueResolution(resolution: InsertIssueResolution): Promise<IssueResolution> {
+    const id = randomUUID();
+    const res: IssueResolution = {
+      ...resolution,
+      id,
+      createdAt: new Date(),
+    };
+    this.issueResolutionsMap.set(id, res);
+    return res;
+  }
+
+  async getIssueResolutions(issueId: string): Promise<IssueResolution[]> {
+    return Array.from(this.issueResolutionsMap.values())
+      .filter(r => r.issueId === issueId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  async getDocumentIssueResolutions(documentId: string): Promise<IssueResolution[]> {
+    return Array.from(this.issueResolutionsMap.values())
+      .filter(r => r.documentId === documentId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  async getIssuesWithResolutions(documentId: string): Promise<{ issue: QualityIssue; resolutions: IssueResolution[] }[]> {
+    const issues = await this.getIssuesByDocument(documentId);
+    const result = [];
+    for (const issue of issues) {
+      const resolutions = await this.getIssueResolutions(issue.id);
+      result.push({ issue, resolutions });
+    }
+    return result;
+  }
+
+  // Users
+  async getUser(id: string): Promise<User | undefined> {
+    return this.usersMap.get(id);
+  }
+
+  async upsertUser(userData: UpsertUser): Promise<User> {
+    const existing = userData.id ? this.usersMap.get(userData.id) : undefined;
+    
+    if (existing) {
+      const updated: User = {
+        ...existing,
+        email: userData.email ?? existing.email,
+        firstName: userData.firstName ?? existing.firstName,
+        lastName: userData.lastName ?? existing.lastName,
+        profileImageUrl: userData.profileImageUrl ?? existing.profileImageUrl,
+        updatedAt: new Date(),
+      };
+      this.usersMap.set(existing.id, updated);
+      return updated;
+    }
+
+    const id = userData.id || randomUUID();
+    const user: User = {
+      id,
+      email: userData.email || null,
+      firstName: userData.firstName || null,
+      lastName: userData.lastName || null,
+      profileImageUrl: userData.profileImageUrl || null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.usersMap.set(id, user);
+    return user;
+  }
+
+  // Processing Events (Audit Trail)
+  async createProcessingEvent(event: InsertProcessingEvent): Promise<ProcessingEvent> {
+    const id = randomUUID();
+    const pEvent: ProcessingEvent = {
+      ...event,
+      id,
+      pageId: event.pageId || null,
+      performedBy: event.performedBy || null,
+      details: event.details || null,
+      errorMessage: event.errorMessage || null,
+      createdAt: new Date(),
+    };
+    this.processingEventsMap.set(id, pEvent);
+    return pEvent;
+  }
+
+  async getEventsByDocument(documentId: string): Promise<ProcessingEvent[]> {
+    return Array.from(this.processingEventsMap.values())
+      .filter(e => e.documentId === documentId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  async getEventsByPage(pageId: string): Promise<ProcessingEvent[]> {
+    return Array.from(this.processingEventsMap.values())
+      .filter(e => e.pageId === pageId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  async getRecentEvents(limit: number = 100): Promise<ProcessingEvent[]> {
+    return Array.from(this.processingEventsMap.values())
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, limit);
+  }
+
+  async getFailedEvents(): Promise<ProcessingEvent[]> {
+    return Array.from(this.processingEventsMap.values())
+      .filter(e => e.status === "failed")
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
 
@@ -422,6 +596,7 @@ export class MemStorage implements IStorage {
     const verification: BatchAllocationVerification = {
       ...insertVerification,
       id,
+      status: insertVerification.status || "pending",
       uploadedAt: new Date(),
       completedAt: null,
       batchNumber: insertVerification.batchNumber || null,

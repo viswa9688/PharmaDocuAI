@@ -9,13 +9,18 @@ import {
   SidebarMenuItem,
   SidebarHeader,
 } from "@/components/ui/sidebar";
-import { Upload, FileText, FolderOpen, Settings, FileCheck, Scale, Calendar } from "lucide-react";
+import { Upload, FileText, FolderOpen, Settings, FileCheck, Scale, Calendar, LayoutDashboard, History, CheckCircle } from "lucide-react";
 import { Link, useLocation } from "wouter";
 
-const menuItems = [
+const mainMenuItems = [
+  {
+    title: "Dashboard",
+    url: "/",
+    icon: LayoutDashboard,
+  },
   {
     title: "Upload",
-    url: "/",
+    url: "/upload",
     icon: Upload,
   },
   {
@@ -28,6 +33,9 @@ const menuItems = [
     url: "/documents",
     icon: FolderOpen,
   },
+];
+
+const verificationMenuItems = [
   {
     title: "BMR Verification",
     url: "/bmr-verification",
@@ -42,6 +50,19 @@ const menuItems = [
     title: "Batch Allocation",
     url: "/batch-allocation",
     icon: Calendar,
+  },
+];
+
+const complianceMenuItems = [
+  {
+    title: "Approvals",
+    url: "/approved",
+    icon: CheckCircle,
+  },
+  {
+    title: "Audit Trail",
+    url: "/audit-trail",
+    icon: History,
   },
   {
     title: "Settings",
@@ -66,10 +87,50 @@ export function AppSidebar() {
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+          <SidebarGroupLabel>Main</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {menuItems.map((item) => {
+              {mainMenuItems.map((item) => {
+                const isActive = location === item.url || (item.url === "/" && location === "/dashboard");
+                return (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton asChild data-active={isActive}>
+                      <Link href={item.url}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>Verification</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {verificationMenuItems.map((item) => {
+                const isActive = location === item.url;
+                return (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton asChild data-active={isActive}>
+                      <Link href={item.url}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>Compliance</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {complianceMenuItems.map((item) => {
                 const isActive = location === item.url;
                 return (
                   <SidebarMenuItem key={item.title}>

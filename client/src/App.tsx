@@ -15,11 +15,15 @@ import Settings from "@/pages/settings";
 import BMRVerification from "@/pages/bmr-verification";
 import RawMaterialVerification from "@/pages/raw-material-verification";
 import BatchAllocationVerification from "@/pages/batch-allocation-verification";
+import Dashboard from "@/pages/dashboard";
+import AuditTrail from "@/pages/audit-trail";
+import Approved from "@/pages/approved";
 
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={Upload} />
+      <Route path="/" component={Dashboard} />
+      <Route path="/upload" component={Upload} />
       <Route path="/documents" component={Documents} />
       <Route path="/documents/:id" component={DocumentViewer} />
       <Route path="/processing" component={Processing} />
@@ -27,6 +31,9 @@ function Router() {
       <Route path="/bmr-verification" component={BMRVerification} />
       <Route path="/raw-material" component={RawMaterialVerification} />
       <Route path="/batch-allocation" component={BatchAllocationVerification} />
+      <Route path="/dashboard" component={Dashboard} />
+      <Route path="/audit-trail" component={AuditTrail} />
+      <Route path="/approved" component={Approved} />
       <Route component={NotFound} />
     </Switch>
   );

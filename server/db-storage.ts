@@ -9,6 +9,9 @@ import {
   rawMaterialVerifications,
   rawMaterialResults,
   batchAllocationVerifications,
+  users,
+  processingEvents,
+  issueResolutions,
   type Document,
   type InsertDocument,
   type Page,
@@ -28,14 +31,24 @@ import {
   type InsertRawMaterialResult,
   type BatchAllocationVerification,
   type InsertBatchAllocationVerification,
+  type User,
+  type UpsertUser,
+  type ProcessingEvent,
+  type InsertProcessingEvent,
+  type IssueResolution,
+  type InsertIssueResolution,
 } from "@shared/schema";
 import { eq, desc, and } from "drizzle-orm";
 import type { IStorage } from "./storage";
 
 export class DBStorage implements IStorage {
   // Documents
-  async createDocument(insertDoc: InsertDocument): Promise<Document> {
-    const [doc] = await db.insert(documents).values(insertDoc).returning();
+  async createDocument(insertDoc: InsertDocument, uploadedBy?: string | null): Promise<Document> {
+    const docData = {
+      ...insertDoc,
+      uploadedBy: uploadedBy || null,
+    };
+    const [doc] = await db.insert(documents).values(docData).returning();
     return doc;
   }
 
@@ -103,6 +116,144 @@ export class DBStorage implements IStorage {
       .from(qualityIssues)
       .where(eq(qualityIssues.documentId, documentId))
       .orderBy(desc(qualityIssues.createdAt));
+  }
+
+  async getQualityIssue(id: string): Promise<QualityIssue | undefined> {
+    const [issue] = await db.select().from(qualityIssues).where(eq(qualityIssues.id, id));
+    return issue;
+  }
+
+  async updateQualityIssue(id: string, updates: Partial<QualityIssue>): Promise<QualityIssue | undefined> {
+    const [updated] = await db
+      .update(qualityIssues)
+      .set(updates)
+      .where(eq(qualityIssues.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteIssuesByDocument(documentId: string): Promise<number> {
+    await db
+      .delete(issueResolutions)
+      .where(eq(issueResolutions.documentId, documentId));
+    
+    const result = await db
+      .delete(qualityIssues)
+      .where(eq(qualityIssues.documentId, documentId))
+      .returning();
+    
+    return result.length;
+  }
+
+  // Issue Resolutions
+  async createIssueResolution(resolution: InsertIssueResolution): Promise<IssueResolution> {
+    const [created] = await db.insert(issueResolutions).values(resolution).returning();
+    return created;
+  }
+
+  async getIssueResolutions(issueId: string): Promise<IssueResolution[]> {
+    return db
+      .select()
+      .from(issueResolutions)
+      .where(eq(issueResolutions.issueId, issueId))
+      .orderBy(desc(issueResolutions.createdAt));
+  }
+
+  async getDocumentIssueResolutions(documentId: string): Promise<IssueResolution[]> {
+    return db
+      .select()
+      .from(issueResolutions)
+      .where(eq(issueResolutions.documentId, documentId))
+      .orderBy(desc(issueResolutions.createdAt));
+  }
+
+  async getIssuesWithResolutions(documentId: string): Promise<{ issue: QualityIssue; resolutions: IssueResolution[] }[]> {
+    const issues = await this.getIssuesByDocument(documentId);
+    const result = [];
+    for (const issue of issues) {
+      const resolutions = await this.getIssueResolutions(issue.id);
+      result.push({ issue, resolutions });
+    }
+    return result;
+  }
+
+  // Users
+  async getUser(id: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
+  }
+
+  async upsertUser(userData: UpsertUser): Promise<User> {
+    const [existingById] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, userData.id!));
+    
+    if (existingById) {
+      const [updated] = await db
+        .update(users)
+        .set({
+          email: userData.email,
+          firstName: userData.firstName,
+          lastName: userData.lastName,
+          profileImageUrl: userData.profileImageUrl,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, userData.id!))
+        .returning();
+      return updated;
+    }
+    
+    if (userData.email) {
+      await db
+        .update(users)
+        .set({ email: null })
+        .where(eq(users.email, userData.email));
+    }
+    
+    const [user] = await db
+      .insert(users)
+      .values(userData)
+      .returning();
+    return user;
+  }
+
+  // Processing Events (Audit Trail)
+  async createProcessingEvent(event: InsertProcessingEvent): Promise<ProcessingEvent> {
+    const [created] = await db.insert(processingEvents).values(event).returning();
+    return created;
+  }
+
+  async getEventsByDocument(documentId: string): Promise<ProcessingEvent[]> {
+    return db
+      .select()
+      .from(processingEvents)
+      .where(eq(processingEvents.documentId, documentId))
+      .orderBy(desc(processingEvents.createdAt));
+  }
+
+  async getEventsByPage(pageId: string): Promise<ProcessingEvent[]> {
+    return db
+      .select()
+      .from(processingEvents)
+      .where(eq(processingEvents.pageId, pageId))
+      .orderBy(desc(processingEvents.createdAt));
+  }
+
+  async getRecentEvents(limit: number = 100): Promise<ProcessingEvent[]> {
+    return db
+      .select()
+      .from(processingEvents)
+      .orderBy(desc(processingEvents.createdAt))
+      .limit(limit);
+  }
+
+  async getFailedEvents(): Promise<ProcessingEvent[]> {
+    return db
+      .select()
+      .from(processingEvents)
+      .where(eq(processingEvents.status, "failed"))
+      .orderBy(desc(processingEvents.createdAt));
   }
 
   // Summary
