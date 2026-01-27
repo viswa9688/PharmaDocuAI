@@ -23,6 +23,9 @@ import {
   ThumbsUp,
   ThumbsDown,
   Eye,
+  FlaskConical,
+  ClipboardCheck,
+  Layers,
 } from "lucide-react";
 import { format } from "date-fns";
 import { useLocation } from "wouter";
@@ -83,6 +86,19 @@ export default function Approved() {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const getDocumentTypeDisplay = (docType: string | null | undefined) => {
+    switch (docType) {
+      case "raw_material":
+        return { label: "Raw Material", icon: FlaskConical, color: "bg-purple-600" };
+      case "batch_allocation":
+        return { label: "Batch Allocation", icon: ClipboardCheck, color: "bg-blue-600" };
+      case "bmr_verification":
+        return { label: "BMR Verification", icon: Layers, color: "bg-orange-600" };
+      default:
+        return { label: "Batch Record", icon: FileText, color: "bg-gray-600" };
+    }
   };
 
   return (
@@ -161,6 +177,7 @@ export default function Approved() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Document</TableHead>
+                      <TableHead>Type</TableHead>
                       <TableHead>Pages</TableHead>
                       <TableHead>Uploaded</TableHead>
                       <TableHead>Status</TableHead>
@@ -168,11 +185,14 @@ export default function Approved() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredDocuments.map((doc) => (
+                    {filteredDocuments.map((doc) => {
+                      const typeInfo = getDocumentTypeDisplay(doc.documentType);
+                      const TypeIcon = typeInfo.icon;
+                      return (
                       <TableRow key={doc.id} data-testid={`row-document-${doc.id}`}>
                         <TableCell>
                           <div className="flex items-center gap-3">
-                            <FileText className="h-5 w-5 text-muted-foreground" />
+                            <TypeIcon className="h-5 w-5 text-muted-foreground" />
                             <div>
                               <div className="font-medium">{doc.filename}</div>
                               <div className="text-xs text-muted-foreground">
@@ -180,6 +200,9 @@ export default function Approved() {
                               </div>
                             </div>
                           </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={typeInfo.color}>{typeInfo.label}</Badge>
                         </TableCell>
                         <TableCell>{doc.totalPages || "-"}</TableCell>
                         <TableCell>
@@ -214,7 +237,8 @@ export default function Approved() {
                           </div>
                         </TableCell>
                       </TableRow>
-                    ))}
+                    );
+                    })}
                   </TableBody>
                 </Table>
               )}
@@ -237,6 +261,7 @@ export default function Approved() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Document</TableHead>
+                      <TableHead>Type</TableHead>
                       <TableHead>Pages</TableHead>
                       <TableHead>Approved</TableHead>
                       <TableHead>Status</TableHead>
@@ -244,11 +269,14 @@ export default function Approved() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredDocuments.map((doc) => (
+                    {filteredDocuments.map((doc) => {
+                      const typeInfo = getDocumentTypeDisplay(doc.documentType);
+                      const TypeIcon = typeInfo.icon;
+                      return (
                       <TableRow key={doc.id} data-testid={`row-document-${doc.id}`}>
                         <TableCell>
                           <div className="flex items-center gap-3">
-                            <FileText className="h-5 w-5 text-muted-foreground" />
+                            <TypeIcon className="h-5 w-5 text-muted-foreground" />
                             <div>
                               <div className="font-medium">{doc.filename}</div>
                               <div className="text-xs text-muted-foreground">
@@ -256,6 +284,9 @@ export default function Approved() {
                               </div>
                             </div>
                           </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={typeInfo.color}>{typeInfo.label}</Badge>
                         </TableCell>
                         <TableCell>{doc.totalPages || "-"}</TableCell>
                         <TableCell>
@@ -293,7 +324,8 @@ export default function Approved() {
                           </div>
                         </TableCell>
                       </TableRow>
-                    ))}
+                    );
+                    })}
                   </TableBody>
                 </Table>
               )}

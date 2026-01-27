@@ -81,6 +81,8 @@ export const documents = pgTable("documents", {
   totalPages: integer("total_pages"),
   processedPages: integer("processed_pages").default(0),
   errorMessage: text("error_message"),
+  // Document type for workflow categorization
+  documentType: text("document_type").default("batch_record"), // batch_record, bmr_verification, raw_material, batch_allocation
   // Batch date bounds for temporal validation
   batchDateBounds: jsonb("batch_date_bounds").$type<BatchDateBounds>(),
   // Approval status for batch records
@@ -544,6 +546,7 @@ export const rawMaterialLimits = pgTable("raw_material_limits", {
 // Raw Material Verification Sessions - stores verification instances
 export const rawMaterialVerifications = pgTable("raw_material_verifications", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  documentId: varchar("document_id").references(() => documents.id, { onDelete: "cascade" }),
   mpcNumber: text("mpc_number").notNull(),
   bmrNumber: text("bmr_number"),  // Batch Manufacturing Record number
   filename: text("filename").notNull(),
@@ -621,6 +624,7 @@ export type RawMaterialVerificationResult = {
 // Batch Allocation Verification - validates Mfg/Exp dates and shelf life matching
 export const batchAllocationVerifications = pgTable("batch_allocation_verifications", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  documentId: varchar("document_id").references(() => documents.id, { onDelete: "cascade" }),
   filename: text("filename").notNull(),
   fileSize: integer("file_size").notNull(),
   status: text("status").notNull().default("pending"),  // pending, processing, completed, failed

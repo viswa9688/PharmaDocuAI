@@ -1524,12 +1524,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).json({ error: "Document AI is not configured for document processing" });
       }
 
-      // Process the PDF document
+      // Create document record for approval workflow
+      const document = await storage.createDocument({
+        filename: req.file.originalname,
+        fileSize: req.file.size,
+        documentType: "raw_material",
+      });
+
+      // Log document upload event
+      await logEvent("document_upload", "success", {
+        documentId: document.id,
+        metadata: {
+          filename: req.file.originalname,
+          fileSize: req.file.size,
+          documentType: "raw_material",
+        },
+      });
+
+      // Process the PDF document with Document AI
       const pdfBuffer = req.file.buffer;
-      const document = await documentAI.processDocument(pdfBuffer);
-      const totalPages = documentAI.getTotalPages(document);
+      const docAIResult = await documentAI.processDocument(pdfBuffer);
+      const totalPages = documentAI.getTotalPages(docAIResult);
 
       if (totalPages < 2) {
+        await storage.updateDocument(document.id, {
+          status: "failed",
+          errorMessage: "PDF must contain at least 2 pages"
+        });
+        await logEvent("processing_failed", "failed", {
+          documentId: document.id,
+          errorMessage: "PDF must contain at least 2 pages",
+        });
         return res.status(400).json({ 
           error: "PDF must contain at least 2 pages",
           details: "Upload a PDF with one page containing material limits and another with actual values"
@@ -1539,7 +1564,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Extract data from each page
       const pagesData: { pageNumber: number; tables: any[]; rawText: string }[] = [];
       for (let i = 0; i < totalPages; i++) {
-        const pageData = documentAI.extractPageData(document, i);
+        const pageData = documentAI.extractPageData(docAIResult, i);
         pagesData.push({
           pageNumber: i + 1,
           tables: pageData?.tables || [],
@@ -1575,8 +1600,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`[RAW-MATERIAL]   Raw text snippet: ${page.rawText.substring(0, 300)}`);
       }
 
-      // Create verification record
+      // Create verification record linked to document
       const verification = await storage.createRawMaterialVerification({
+        documentId: document.id,
         mpcNumber,
         bmrNumber,
         filename: req.file.originalname,
@@ -1615,6 +1641,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           status: "failed",
           errorMessage: "Could not identify limits and verification pages"
         });
+        await storage.updateDocument(document.id, {
+          status: "failed",
+          errorMessage: "Could not identify limits and verification pages"
+        });
+        await logEvent("processing_failed", "failed", {
+          documentId: document.id,
+          errorMessage: "Could not identify limits and verification pages",
+        });
         return res.status(400).json({ 
           error: "Could not identify limits and verification pages",
           details: "Ensure the PDF has a page with material limits (ranges) and a page with actual values"
@@ -1631,6 +1665,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await storage.updateRawMaterialVerification(verification.id, {
           status: "failed",
           errorMessage: "No material limits could be extracted from the limits page"
+        });
+        await storage.updateDocument(document.id, {
+          status: "failed",
+          errorMessage: "No material limits could be extracted from the limits page"
+        });
+        await logEvent("processing_failed", "failed", {
+          documentId: document.id,
+          errorMessage: "No material limits found",
         });
         return res.status(400).json({ 
           error: "No material limits found",
@@ -1677,7 +1719,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         materialsOutOfLimits,
       });
 
+      // Update document record
+      await storage.updateDocument(document.id, {
+        status: "completed",
+        totalPages,
+      });
+
+      // Log processing completion
+      await logEvent("processing_complete", "success", {
+        documentId: document.id,
+        metadata: {
+          totalPages,
+          verificationType: "raw_material",
+          totalMaterials: results.length,
+          materialsWithinLimits,
+          materialsOutOfLimits,
+        },
+      });
+
       res.json({
+        documentId: document.id,
         verificationId: verification.id,
         status: "completed",
         limitsPage: limitsPageData.pageNumber,
@@ -1744,8 +1805,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "No file uploaded" });
       }
 
-      // Create verification record
+      // Create document record for approval workflow
+      const document = await storage.createDocument({
+        filename: req.file.originalname,
+        fileSize: req.file.size,
+        documentType: "batch_allocation",
+      });
+
+      // Log document upload event
+      await logEvent("document_upload", "success", {
+        documentId: document.id,
+        metadata: {
+          filename: req.file.originalname,
+          fileSize: req.file.size,
+          documentType: "batch_allocation",
+        },
+      });
+
+      // Create verification record linked to document
       const verification = await storage.createBatchAllocationVerification({
+        documentId: document.id,
         filename: req.file.originalname,
         fileSize: req.file.size,
         status: "processing",
@@ -1756,20 +1835,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
           status: "failed",
           errorMessage: "Document AI is not configured for document processing"
         });
+        await storage.updateDocument(document.id, {
+          status: "failed",
+          errorMessage: "Document AI is not configured for document processing"
+        });
+        await logEvent("processing_failed", "failed", {
+          documentId: document.id,
+          errorMessage: "Document AI is not configured",
+        });
         return res.status(500).json({ error: "Document AI is not configured for document processing" });
       }
 
-      // Process the document
+      // Process the document with Document AI
       const pdfBuffer = req.file.buffer;
-      const document = await documentAI.processDocument(pdfBuffer);
-      const totalPages = documentAI.getTotalPages(document);
+      const docAIResult = await documentAI.processDocument(pdfBuffer);
+      const totalPages = documentAI.getTotalPages(docAIResult);
 
       // Extract data from all pages
       let allText = "";
       const allTables: any[] = [];
       
       for (let i = 0; i < totalPages; i++) {
-        const pageData = documentAI.extractPageData(document, i);
+        const pageData = documentAI.extractPageData(docAIResult, i);
         allText += (pageData?.extractedText || "") + "\n";
         if (pageData?.tables) {
           allTables.push(...pageData.tables);
@@ -1802,7 +1889,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       });
 
+      // Update document record
+      await storage.updateDocument(document.id, {
+        status: "completed",
+        totalPages,
+      });
+
+      // Log processing completion
+      await logEvent("processing_complete", "success", {
+        documentId: document.id,
+        metadata: {
+          totalPages,
+          verificationType: "batch_allocation",
+        },
+      });
+
       res.json({
+        documentId: document.id,
         verificationId: verification.id,
         status: "completed",
         ...extraction,
