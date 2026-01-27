@@ -106,14 +106,25 @@ The system is built on a React, Express, PostgreSQL, and TypeScript stack.
 - **Storage**: `processingEvents` table with user tracking, timestamps, and metadata (JSONB)
 - **API Endpoint**: `/api/events/recent` returns events with user information
 
-### Document Approval Workflow
-- **Purpose**: Approve/disapprove functionality for processed batch records with user tracking
+### Document Approval Workflow (Unified)
+- **Purpose**: Unified approval/disapproval functionality for all document types with user tracking
+- **Unified Workflow**: All verification types (BMR, Raw Material, Batch Allocation) create document records that flow into the Approvals page
+- **Document Types**: 
+  - `batch_record` (gray badge) - Default batch records
+  - `raw_material` (purple badge with beaker icon) - Raw Material Verification uploads
+  - `batch_allocation` (blue badge with calendar icon) - Batch Allocation Verification uploads  
+  - `bmr_verification` (orange badge) - BMR Verification uploads
 - **Key Features**:
   - Pending/Approved tabs for workflow management
+  - Type column with color-coded badges and icons
   - Approve and Revoke actions with confirmation
   - Approver tracking (who approved and when)
   - Integration with audit trail for compliance
-- **Storage**: Documents have `isApproved`, `approvedBy`, `approvedAt` fields
+- **Data Linking**: 
+  - `documents` table has `documentType` field for categorization
+  - `rawMaterialVerifications` and `batchAllocationVerifications` tables have `documentId` foreign key
+  - All uploads log `document_upload`, `processing_complete`, `processing_failed` events
+- **Storage**: Documents have `isApproved`, `approvedBy`, `approvedAt`, `documentType` fields
 - **API Endpoint**: `PATCH /api/documents/:id/approve` updates approval status and logs events
 
 ### Issue Resolution Feature
