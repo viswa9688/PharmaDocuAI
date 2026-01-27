@@ -1561,6 +1561,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // Extract page images for document viewer
+      let pageImages: string[] = [];
+      try {
+        console.log(`[RAW-MATERIAL] Extracting images for ${totalPages} pages...`);
+        pageImages = await pdfProcessor.extractPageImages(pdfBuffer, document.id);
+        console.log(`[RAW-MATERIAL] Successfully extracted ${pageImages.length} page images`);
+      } catch (imageError: any) {
+        console.warn("[RAW-MATERIAL] Failed to extract page images:", imageError.message);
+        // Continue without images - they're not critical for verification
+      }
+
       // Extract data from each page
       const pagesData: { pageNumber: number; tables: any[]; rawText: string }[] = [];
       for (let i = 0; i < totalPages; i++) {
@@ -1628,6 +1639,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (nonLimitsPage) nonLimitsPage.pageType = "verification";
         else classifications[1].pageType = "verification";
       }
+
+      // Create page records for document viewer display
+      for (const pageData of pagesData) {
+        const classification = classifications.find(c => c.pageNumber === pageData.pageNumber);
+        const classificationLabel = classification?.pageType === "limits" 
+          ? "raw_material_limits" 
+          : classification?.pageType === "verification" 
+            ? "raw_material_verification" 
+            : "raw_material_other";
+        
+        await storage.createPage({
+          documentId: document.id,
+          pageNumber: pageData.pageNumber,
+          classification: classificationLabel,
+          confidence: classification?.confidence || 0.8,
+          extractedText: pageData.rawText,
+          imagePath: pageImages[pageData.pageNumber - 1] || null,
+          issues: [],
+          metadata: {
+            pageType: classification?.pageType || "unknown",
+            tables: pageData.tables,
+          } as Record<string, any>,
+        });
+      }
+      console.log(`[RAW-MATERIAL] Created ${pagesData.length} page records`);
 
       const limitsPageData = pagesData.find(p => 
         classifications.find(c => c.pageNumber === p.pageNumber && c.pageType === "limits")
