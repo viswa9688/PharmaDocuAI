@@ -85,6 +85,47 @@ The system is built on a React, Express, PostgreSQL, and TypeScript stack.
 - **Validation**: Flags whether dates match and calculated shelf life is valid (positive months)
 - **Storage**: `batchAllocationVerifications` table with all extracted fields and JSONB for additional data
 
+### Dashboard Feature
+- **Purpose**: Provides a comprehensive compliance overview with validation statistics and document metrics
+- **Key Components**:
+  - **Overall Status Card**: Shows compliant/review required/non-compliant status with pass rate and total alerts
+  - **Category Cards**: Six validation categories (Signatures, Data Integrity, Calculations, Date Sequence, Batch Numbers, Page Completeness)
+  - **Document Summary**: Total documents, approved count, and documents with issues
+- **API Endpoint**: `/api/dashboard/summary` computes validation statistics on-demand
+- **Auto-Refresh**: Dashboard refreshes every 30 seconds
+
+### Audit Trail Feature
+- **Purpose**: Complete history of document processing events for compliance tracking
+- **Event Types Tracked**:
+  - document_upload, document_delete, document_viewed
+  - document_ai_extraction, page_classification, validation
+  - processing_complete, processing_failed
+  - document_approved, document_unapproved
+  - issue_approved, issue_rejected
+- **Filtering**: By status (success/failed/pending) and event type
+- **Storage**: `processingEvents` table with user tracking, timestamps, and metadata (JSONB)
+- **API Endpoint**: `/api/events/recent` returns events with user information
+
+### Document Approval Workflow
+- **Purpose**: Approve/disapprove functionality for processed batch records with user tracking
+- **Key Features**:
+  - Pending/Approved tabs for workflow management
+  - Approve and Revoke actions with confirmation
+  - Approver tracking (who approved and when)
+  - Integration with audit trail for compliance
+- **Storage**: Documents have `isApproved`, `approvedBy`, `approvedAt` fields
+- **API Endpoint**: `PATCH /api/documents/:id/approve` updates approval status and logs events
+
+### Issue Resolution Feature
+- **Purpose**: Track and resolve validation issues with approve/reject workflow
+- **Storage**: `issueResolutions` table tracks documentId, alertId, status, comment, resolved timestamp
+- **API Endpoint**: `POST /api/issues/resolve` with status (approved/rejected) and optional comment
+
+### User Management
+- **Authentication**: Integrated with Replit Auth (OIDC) for user authentication
+- **User Storage**: `users` table with id, email, firstName, lastName, profileImageUrl
+- **Test Login**: Support for test credentials when not on Replit domain
+
 ## External Dependencies
 - **Google Cloud Platform**:
     - **Google Document AI**: For advanced document parsing and data extraction.
