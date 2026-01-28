@@ -11,6 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { PageImageOverlay } from "./page-image-overlay";
 import type { Page } from "@shared/schema";
 import { useParams } from "wouter";
 import { CheckSquare, Square, FileText, PenLine, FileSignature, LayoutGrid, CheckCircle2, XCircle, AlertCircle, ArrowRight } from "lucide-react";
@@ -68,28 +69,21 @@ export function PageDetailPanel({ page, open, onOpenChange }: PageDetailPanelPro
         </div>
 
         <div className="grid grid-cols-2 gap-6 p-6 h-[calc(100vh-10rem)]">
-          {/* Left: Page Image */}
+          {/* Left: Page Image with Error Overlays */}
           <div className="space-y-4">
             <h3 className="text-sm font-medium">Scanned Page</h3>
             <Card className="overflow-hidden">
               <ScrollArea className="h-[calc(100vh-14rem)]">
                 {imageUrl ? (
-                  <img
-                    src={imageUrl}
-                    alt={`Page ${page.pageNumber}`}
-                    className="w-full h-auto"
-                    data-testid="img-page-scan"
-                    onError={(e) => {
-                      // Hide broken image and show error message
-                      e.currentTarget.style.display = 'none';
-                      const errorDiv = e.currentTarget.parentElement?.querySelector('.image-error');
-                      if (errorDiv) errorDiv.classList.remove('hidden');
-                    }}
+                  <PageImageOverlay
+                    page={page}
+                    imageUrl={imageUrl}
                   />
-                ) : null}
-                <div className={`flex items-center justify-center h-96 text-muted-foreground ${imageUrl ? 'hidden image-error' : ''}`}>
-                  {imageUrl ? 'Failed to load image' : 'No image available'}
-                </div>
+                ) : (
+                  <div className="flex items-center justify-center h-96 text-muted-foreground">
+                    No image available
+                  </div>
+                )}
               </ScrollArea>
             </Card>
           </div>
