@@ -121,7 +121,7 @@ export default function BMRVerificationPage() {
       case "critical":
         return <Badge variant="destructive">Critical</Badge>;
       case "major":
-        return <Badge className="bg-orange-500 hover:bg-orange-600">Major</Badge>;
+        return <Badge className="bg-orange-500">Major</Badge>;
       case "minor":
         return <Badge variant="secondary">Minor</Badge>;
       default:
@@ -336,7 +336,7 @@ export default function BMRVerificationPage() {
                                 ? "border-red-500 bg-red-100 dark:bg-red-950/50" 
                                 : d.severity === "major"
                                 ? "border-orange-500 bg-orange-100 dark:bg-orange-950/50"
-                                : "bg-card"
+                                : "border-yellow-500 bg-yellow-50 dark:bg-yellow-950/30"
                             }`}>
                               <div className="flex items-start justify-between gap-2">
                                 <div className="flex-1">
