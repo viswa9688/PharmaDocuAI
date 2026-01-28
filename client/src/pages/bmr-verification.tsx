@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,8 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { PageImageOverlay } from "@/components/page-image-overlay";
 import { 
   Upload, 
   FileCheck, 
@@ -18,9 +20,11 @@ import {
   FileText,
   Loader2,
   Trash2,
-  ChevronRight
+  ChevronRight,
+  ChevronLeft,
+  Image
 } from "lucide-react";
-import type { BMRVerification, BMRDiscrepancy } from "@shared/schema";
+import type { BMRVerification, BMRDiscrepancy, Page } from "@shared/schema";
 
 type VerificationResult = {
   verification: BMRVerification;
@@ -33,6 +37,8 @@ export default function BMRVerificationPage() {
   const { toast } = useToast();
   const [selectedVerificationId, setSelectedVerificationId] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [selectedPageNumber, setSelectedPageNumber] = useState<number>(1);
+  const [activeTab, setActiveTab] = useState<string>("results");
 
   const { data: verifications = [], isLoading: loadingVerifications } = useQuery<BMRVerification[]>({
     queryKey: ["/api/bmr-verification"],
@@ -48,6 +54,26 @@ export default function BMRVerificationPage() {
       return status === "processing" || status === "pending" ? 2000 : false;
     },
   });
+
+  const { data: pagesData, isLoading: loadingPages } = useQuery<{ pages: Page[] }>({
+    queryKey: ["/api/bmr-verification", selectedVerificationId, "pages"],
+    enabled: !!selectedVerificationId && selectedResult?.verification?.status === "completed",
+  });
+
+  const pages = pagesData?.pages || [];
+  const currentPage = pages.find(p => p.pageNumber === selectedPageNumber);
+
+  // Reset page number when verification changes or pages load
+  useEffect(() => {
+    setSelectedPageNumber(1);
+  }, [selectedVerificationId]);
+
+  // Ensure selectedPageNumber is valid for current pages
+  useEffect(() => {
+    if (pages.length > 0 && selectedPageNumber > pages.length) {
+      setSelectedPageNumber(1);
+    }
+  }, [pages.length, selectedPageNumber]);
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -241,7 +267,7 @@ export default function BMRVerificationPage() {
         </Card>
 
         <Card className="lg:col-span-2">
-          <CardHeader>
+          <CardHeader className="pb-2">
             <CardTitle className="text-lg flex items-center gap-2">
               <FileCheck className="h-5 w-5" />
               Verification Results
@@ -262,7 +288,19 @@ export default function BMRVerificationPage() {
                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
               </div>
             ) : selectedResult ? (
-              <div className="space-y-6">
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+                <TabsList className="mb-4">
+                  <TabsTrigger value="results" data-testid="tab-results">
+                    <FileCheck className="h-4 w-4 mr-2" />
+                    Results
+                  </TabsTrigger>
+                  <TabsTrigger value="pages" data-testid="tab-pages" disabled={pages.length === 0}>
+                    <Image className="h-4 w-4 mr-2" />
+                    Pages ({pages.length})
+                  </TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="results" className="space-y-6">
                 {selectedResult.verification.status === "processing" && (
                   <div className="space-y-2">
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -382,7 +420,88 @@ export default function BMRVerificationPage() {
                     )}
                   </>
                 )}
-              </div>
+                </TabsContent>
+
+                <TabsContent value="pages" className="space-y-4">
+                  {loadingPages ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : pages.length === 0 ? (
+                    <div className="text-center py-12 text-muted-foreground">
+                      <Image className="h-16 w-16 mx-auto mb-4 opacity-30" />
+                      <p>No pages available</p>
+                      <p className="text-sm">Page images may still be processing</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            onClick={() => setSelectedPageNumber(Math.max(1, selectedPageNumber - 1))}
+                            disabled={selectedPageNumber <= 1}
+                            data-testid="button-prev-page"
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                          </Button>
+                          <span className="text-sm font-medium">
+                            Page {selectedPageNumber} of {pages.length}
+                          </span>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            onClick={() => setSelectedPageNumber(Math.min(pages.length, selectedPageNumber + 1))}
+                            disabled={selectedPageNumber >= pages.length}
+                            data-testid="button-next-page"
+                          >
+                            <ChevronRight className="h-4 w-4" />
+                          </Button>
+                        </div>
+
+                        {selectedResult.verification.masterProductCardPage === selectedPageNumber && (
+                          <Badge className="bg-blue-500">Master Product Card</Badge>
+                        )}
+                        {selectedResult.verification.bmrPage === selectedPageNumber && (
+                          <Badge className="bg-purple-500">BMR</Badge>
+                        )}
+                      </div>
+
+                      <Card className="overflow-hidden">
+                        <ScrollArea className="h-[500px]">
+                          {currentPage?.imagePath ? (
+                            <PageImageOverlay
+                              page={currentPage}
+                              imageUrl={`/api/images/${encodeURIComponent(currentPage.imagePath)}`}
+                            />
+                          ) : (
+                            <div className="flex items-center justify-center h-96 text-muted-foreground">
+                              No image available for this page
+                            </div>
+                          )}
+                        </ScrollArea>
+                      </Card>
+
+                      <div className="flex gap-2 flex-wrap">
+                        {pages.map((page) => (
+                          <Button
+                            key={page.pageNumber}
+                            variant={selectedPageNumber === page.pageNumber ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => setSelectedPageNumber(page.pageNumber)}
+                            data-testid={`button-page-${page.pageNumber}`}
+                          >
+                            {page.pageNumber}
+                            {selectedResult.verification.masterProductCardPage === page.pageNumber && " (MPC)"}
+                            {selectedResult.verification.bmrPage === page.pageNumber && " (BMR)"}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </TabsContent>
+              </Tabs>
             ) : null}
           </CardContent>
         </Card>

@@ -1344,15 +1344,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get pages for a BMR verification
+  app.get("/api/bmr-verification/:id/pages", async (req, res) => {
+    try {
+      const verification = await storage.getBMRVerification(req.params.id);
+      if (!verification) {
+        return res.status(404).json({ error: "Verification not found" });
+      }
+
+      if (!verification.documentId) {
+        return res.json({ pages: [] });
+      }
+
+      const pages = await storage.getPagesByDocument(verification.documentId);
+      res.json({ pages });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Process BMR verification function
   async function processBMRVerification(verificationId: string, pdfBuffer: Buffer) {
     try {
       console.log(`[BMR-VERIFY] Starting verification ${verificationId}`);
       await storage.updateBMRVerification(verificationId, { status: "processing" });
 
+      // Get verification record to access filename
+      const verification = await storage.getBMRVerification(verificationId);
+      if (!verification) {
+        throw new Error("Verification record not found");
+      }
+
+      // Create a document record to store page images
+      const document = await storage.createDocument({
+        filename: verification.filename,
+        fileSize: verification.fileSize,
+        status: "processing",
+        documentType: "bmr_verification",
+      });
+      console.log(`[BMR-VERIFY] Created document ${document.id} for verification`);
+
+      // Link document to verification
+      await storage.updateBMRVerification(verificationId, { documentId: document.id });
+
       // Extract text from each page using PDF processor
       const pageCount = await pdfProcessor.getPageCount(pdfBuffer);
       console.log(`[BMR-VERIFY] PDF has ${pageCount} pages`);
+
+      // Extract page images for viewing
+      try {
+        const pageImagePaths = await pdfProcessor.extractPageImages(pdfBuffer, document.id);
+        console.log(`[BMR-VERIFY] Extracted ${pageImagePaths.length} page images`);
+
+        // Create page records with images
+        for (let i = 0; i < pageImagePaths.length; i++) {
+          await storage.createPage({
+            documentId: document.id,
+            pageNumber: i + 1,
+            classification: "bmr_verification",
+            confidence: 100,
+            imagePath: pageImagePaths[i],
+            extractedText: "",
+            metadata: {},
+          });
+        }
+        console.log(`[BMR-VERIFY] Created ${pageImagePaths.length} page records`);
+      } catch (imageError: any) {
+        console.warn(`[BMR-VERIFY] Failed to extract page images: ${imageError.message}`);
+      }
       
       const pageTexts: Array<{ pageNumber: number; text: string }> = [];
 
@@ -1499,12 +1558,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         extractedBmrData: result.verificationResult.bmrData,
       });
 
+      // Update document status to completed
+      const updatedVerification = await storage.getBMRVerification(verificationId);
+      if (updatedVerification?.documentId) {
+        await storage.updateDocument(updatedVerification.documentId, { status: "completed" });
+      }
+
     } catch (error: any) {
       console.error("BMR verification processing error:", error);
+      
+      // Update verification status
       await storage.updateBMRVerification(verificationId, {
         status: "failed",
         errorMessage: error.message,
       });
+      
+      // Also update document status if it was created
+      const failedVerification = await storage.getBMRVerification(verificationId);
+      if (failedVerification?.documentId) {
+        await storage.updateDocument(failedVerification.documentId, { status: "failed" });
+      }
+      
       throw error;
     }
   }

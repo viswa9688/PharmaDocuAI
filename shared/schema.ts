@@ -459,6 +459,7 @@ export type DiscrepancySeverity = typeof discrepancySeverities[number];
 // BMR Verification sessions table
 export const bmrVerifications = pgTable("bmr_verifications", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  documentId: varchar("document_id").references(() => documents.id, { onDelete: "cascade" }),
   filename: text("filename").notNull(),
   fileSize: integer("file_size").notNull(),
   status: text("status").notNull().default("pending"),
