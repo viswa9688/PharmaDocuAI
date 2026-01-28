@@ -70,7 +70,12 @@ The system is built on a React, Express, PostgreSQL, and TypeScript stack.
 - **Field Extraction**: Multi-pattern regex approach with fallback to tabular label matching for robustness
 - **Comparison Logic**: Normalizes values (case, whitespace) and compares canonical fields
 - **Discrepancy Severity**: Critical (product name/code), Major (batch size, ingredients), Minor (descriptions, locations)
-- **Storage**: `bmrVerifications` table for sessions, `bmrDiscrepancies` table for detected issues
+- **Visual Error Highlighting**: Bounding box overlays on page images showing exact error locations
+  - Uses Document AI form field extraction to capture field coordinates
+  - Red highlighting for critical/high/major severity, orange for medium, yellow for low/minor/info
+  - MPC and BMR bounding boxes rendered separately with labeled tooltips
+  - PageImageOverlay component handles overlay rendering with severity-based colors
+- **Storage**: `bmrVerifications` table for sessions, `bmrDiscrepancies` table with mpcBoundingBox and bmrBoundingBox JSONB fields
 
 ### Batch Allocation Verification Feature
 - **Purpose**: Validates Manufacturing/Expiry dates and shelf life calculations from Batch Allocation Log documents
