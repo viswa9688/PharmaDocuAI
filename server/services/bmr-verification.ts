@@ -231,21 +231,27 @@ export class BMRVerificationService {
   ): Record<string, ExtractedFieldWithBounds> {
     const fieldsWithBounds: Record<string, ExtractedFieldWithBounds> = {};
     
-    // Map of field name patterns to standardized field keys
+    // Log all form fields for debugging
+    console.log(`[BMR-BOUNDS] Page ${pageNumber}: Found ${formFields.length} form fields from Document AI`);
+    for (const ff of formFields) {
+      console.log(`[BMR-BOUNDS]   Field: "${ff.fieldName}" = "${ff.fieldValue?.substring(0, 50)}..." hasBounds: ${!!ff.valueBoundingBox}`);
+    }
+    
+    // Map of field name patterns to standardized field keys - use more flexible matching
     const fieldNameMappings: Array<{ patterns: RegExp[]; key: string }> = [
-      { patterns: [/product\s*name/i, /product\s*title/i], key: "product_name" },
-      { patterns: [/product\s*code/i, /sku/i, /product\s*id/i], key: "product_code" },
-      { patterns: [/batch\s*size/i, /batch\s*quantity/i, /batch\s*in\s*total/i], key: "batch_size" },
-      { patterns: [/unit\s*of\s*measure/i, /uom/i], key: "unit_of_measure" },
-      { patterns: [/expiry\s*date/i, /exp\.?\s*date/i, /expiration/i], key: "expiry_date" },
-      { patterns: [/shelf\s*life/i], key: "shelf_life" },
-      { patterns: [/physical\s*description/i, /appearance/i, /description/i], key: "physical_description" },
-      { patterns: [/dimensions?/i, /weight/i], key: "dimensions_weight" },
-      { patterns: [/active\s*ingredients?/i, /composition/i], key: "active_ingredients" },
-      { patterns: [/storage\s*conditions?/i, /storage/i], key: "storage_conditions" },
-      { patterns: [/manufacturing\s*location/i, /facility/i, /location/i], key: "manufacturing_location" },
-      { patterns: [/equipment\s*required/i, /equipment/i], key: "equipment_required" },
-      { patterns: [/quality\s*control/i, /qc\s*checkpoints?/i], key: "quality_control_checkpoints" },
+      { patterns: [/product\s*name/i, /product\s*title/i, /^name$/i, /prod.*name/i], key: "product_name" },
+      { patterns: [/product\s*code/i, /sku/i, /product\s*id/i, /^code$/i, /prod.*code/i], key: "product_code" },
+      { patterns: [/batch\s*size/i, /batch\s*quantity/i, /batch\s*in\s*total/i, /^size$/i], key: "batch_size" },
+      { patterns: [/unit\s*of\s*measure/i, /uom/i, /^unit$/i], key: "unit_of_measure" },
+      { patterns: [/expiry\s*date/i, /exp\.?\s*date/i, /expiration/i, /^expiry$/i], key: "expiry_date" },
+      { patterns: [/shelf\s*life/i, /^life$/i], key: "shelf_life" },
+      { patterns: [/physical\s*description/i, /appearance/i, /description/i, /^desc$/i], key: "physical_description" },
+      { patterns: [/dimensions?/i, /weight/i, /^dim$/i], key: "dimensions_weight" },
+      { patterns: [/active\s*ingredients?/i, /composition/i, /^ingredients?$/i, /^active$/i], key: "active_ingredients" },
+      { patterns: [/storage\s*conditions?/i, /storage/i, /^store$/i], key: "storage_conditions" },
+      { patterns: [/manufacturing\s*location/i, /facility/i, /location/i, /^mfg.*loc/i], key: "manufacturing_location" },
+      { patterns: [/equipment\s*required/i, /equipment/i, /^equip$/i], key: "equipment_required" },
+      { patterns: [/quality\s*control/i, /qc\s*checkpoints?/i, /^qc$/i], key: "quality_control_checkpoints" },
     ];
     
     for (const formField of formFields) {
@@ -258,6 +264,7 @@ export class BMRVerificationService {
           if (pattern.test(fieldName)) {
             const value = formField.fieldValue.trim();
             if (value && value.length > 0) {
+              console.log(`[BMR-BOUNDS]   Matched: "${fieldName}" -> ${key}, hasBounds: ${!!formField.valueBoundingBox}`);
               fieldsWithBounds[key] = {
                 value,
                 boundingBox: formField.valueBoundingBox ? {
@@ -275,7 +282,61 @@ export class BMRVerificationService {
       }
     }
     
+    console.log(`[BMR-BOUNDS] Page ${pageNumber}: Extracted ${Object.keys(fieldsWithBounds).length} fields with bounds:`, Object.keys(fieldsWithBounds));
+    
     return fieldsWithBounds;
+  }
+
+  // Find bounding box for a value by searching through all form fields
+  findBoundingBoxForValue(
+    formFields: FormFieldWithBounds[],
+    value: string | undefined,
+    pageNumber: number
+  ): DiscrepancyBoundingBox | null {
+    if (!value || value.length < 3) return null;
+    
+    const normalizedValue = value.toLowerCase().trim();
+    if (normalizedValue.length < 3) return null;
+    
+    // First pass: exact match
+    for (const formField of formFields) {
+      const fieldValue = formField.fieldValue?.toLowerCase().trim() || '';
+      if (fieldValue.length < 3) continue; // Skip empty/short values
+      
+      if (fieldValue === normalizedValue && formField.valueBoundingBox) {
+        console.log(`[BMR-BOUNDS] Found exact bounding box for value "${value.substring(0, 30)}..."`);
+        return {
+          x: formField.valueBoundingBox.x,
+          y: formField.valueBoundingBox.y,
+          width: formField.valueBoundingBox.width,
+          height: formField.valueBoundingBox.height,
+          pageNumber
+        };
+      }
+    }
+    
+    // Second pass: substring match (with minimum length requirements)
+    for (const formField of formFields) {
+      const fieldValue = formField.fieldValue?.toLowerCase().trim() || '';
+      if (fieldValue.length < 3) continue; // Skip empty/short values
+      
+      // Check if one contains the other with reasonable length
+      const containsMatch = (fieldValue.includes(normalizedValue) && normalizedValue.length >= 5) || 
+                           (normalizedValue.includes(fieldValue) && fieldValue.length >= 5);
+      
+      if (containsMatch && formField.valueBoundingBox) {
+        console.log(`[BMR-BOUNDS] Found substring bounding box for value "${value.substring(0, 30)}..."`);
+        return {
+          x: formField.valueBoundingBox.x,
+          y: formField.valueBoundingBox.y,
+          width: formField.valueBoundingBox.width,
+          height: formField.valueBoundingBox.height,
+          pageNumber
+        };
+      }
+    }
+    
+    return null;
   }
 
   extractRawMaterials(text: string): Array<{ code: string; name: string; quantity: string }> {
@@ -415,7 +476,11 @@ export class BMRVerificationService {
     mpcFieldsWithBounds: Record<string, ExtractedFieldWithBounds>,
     bmrFieldsWithBounds: Record<string, ExtractedFieldWithBounds>,
     mpcFields: Record<string, string>,
-    bmrFields: Record<string, string>
+    bmrFields: Record<string, string>,
+    mpcRawFormFields?: FormFieldWithBounds[],
+    bmrRawFormFields?: FormFieldWithBounds[],
+    mpcPageNumber?: number,
+    bmrPageNumber?: number
   ): VerificationResult {
     const discrepancies: Omit<InsertBMRDiscrepancy, "verificationId">[] = [];
     const matchedFields: string[] = [];
@@ -467,6 +532,18 @@ export class BMRVerificationService {
           description = `Field "${fieldDisplayName}" has different values: MPC="${mpcValue}" vs BMR="${bmrValue}"`;
         }
         
+        // Try to get bounding box from field extraction, or fallback to value matching
+        let mpcBoundingBox = mpcFieldsWithBounds[key]?.boundingBox || null;
+        let bmrBoundingBox = bmrFieldsWithBounds[key]?.boundingBox || null;
+        
+        // Fallback: Try to find bounding box by value matching if not found by field name
+        if (!mpcBoundingBox && mpcValue && mpcRawFormFields && mpcPageNumber !== undefined) {
+          mpcBoundingBox = this.findBoundingBoxForValue(mpcRawFormFields, mpcValue, mpcPageNumber);
+        }
+        if (!bmrBoundingBox && bmrValue && bmrRawFormFields && bmrPageNumber !== undefined) {
+          bmrBoundingBox = this.findBoundingBoxForValue(bmrRawFormFields, bmrValue, bmrPageNumber);
+        }
+        
         discrepancies.push({
           fieldName: key,
           mpcValue: mpcValue || null,
@@ -474,11 +551,14 @@ export class BMRVerificationService {
           severity,
           description,
           section,
-          mpcBoundingBox: mpcFieldsWithBounds[key]?.boundingBox || null,
-          bmrBoundingBox: bmrFieldsWithBounds[key]?.boundingBox || null,
+          mpcBoundingBox,
+          bmrBoundingBox,
         });
       }
     }
+    
+    console.log(`[BMR-BOUNDS] Created ${discrepancies.length} discrepancies, with bounding boxes:`, 
+      discrepancies.map(d => ({ field: d.fieldName, hasMpc: !!d.mpcBoundingBox, hasBmr: !!d.bmrBoundingBox })));
     
     return {
       discrepancies,
@@ -608,7 +688,11 @@ export class BMRVerificationService {
       mpcFieldsWithBounds,
       bmrFieldsWithBounds,
       mpcFields,
-      bmrFields
+      bmrFields,
+      mpcFormFields?.formFields,
+      bmrFormFields?.formFields,
+      mpcPage.pageNumber,
+      bmrPage.pageNumber
     );
     
     return {
