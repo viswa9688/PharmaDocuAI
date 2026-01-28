@@ -318,6 +318,8 @@ export class DBStorage implements IStorage {
       mpcValue: insertDiscrepancy.mpcValue || null,
       bmrValue: insertDiscrepancy.bmrValue || null,
       section: insertDiscrepancy.section || null,
+      mpcBoundingBox: insertDiscrepancy.mpcBoundingBox || null,
+      bmrBoundingBox: insertDiscrepancy.bmrBoundingBox || null,
     };
     const [discrepancy] = await db.insert(bmrDiscrepancies).values(discrepancyData).returning();
     return discrepancy;

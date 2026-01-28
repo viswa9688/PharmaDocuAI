@@ -22,8 +22,16 @@ import {
   Trash2,
   ChevronRight,
   ChevronLeft,
-  Image
+  Image,
+  Maximize2,
+  X
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { BMRVerification, BMRDiscrepancy, Page } from "@shared/schema";
 
 type VerificationResult = {
@@ -39,6 +47,7 @@ export default function BMRVerificationPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [selectedPageNumber, setSelectedPageNumber] = useState<number>(1);
   const [activeTab, setActiveTab] = useState<string>("results");
+  const [isFullPageOpen, setIsFullPageOpen] = useState(false);
 
   const { data: verifications = [], isLoading: loadingVerifications } = useQuery<BMRVerification[]>({
     queryKey: ["/api/bmr-verification"],
@@ -466,6 +475,16 @@ export default function BMRVerificationPage() {
                         {selectedResult.verification.bmrPage === selectedPageNumber && (
                           <Badge className="bg-purple-500">BMR</Badge>
                         )}
+                        
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={() => setIsFullPageOpen(true)}
+                          title="Full page view"
+                          data-testid="button-full-page"
+                        >
+                          <Maximize2 className="h-4 w-4" />
+                        </Button>
                       </div>
 
                       <Card className="overflow-hidden">
@@ -537,6 +556,82 @@ export default function BMRVerificationPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Full Page View Dialog */}
+      <Dialog open={isFullPageOpen} onOpenChange={setIsFullPageOpen}>
+        <DialogContent className="max-w-[95vw] max-h-[95vh] p-0 overflow-hidden">
+          <DialogHeader className="p-4 border-b flex flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <DialogTitle>Page {selectedPageNumber}</DialogTitle>
+              {selectedResult?.verification.masterProductCardPage === selectedPageNumber && (
+                <Badge className="bg-blue-500">MPC</Badge>
+              )}
+              {selectedResult?.verification.bmrPage === selectedPageNumber && (
+                <Badge className="bg-purple-500">BMR</Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setSelectedPageNumber(Math.max(1, selectedPageNumber - 1))}
+                disabled={selectedPageNumber <= 1}
+                data-testid="button-full-prev"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="text-sm text-muted-foreground">
+                {selectedPageNumber} / {pages.length}
+              </span>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setSelectedPageNumber(Math.min(pages.length, selectedPageNumber + 1))}
+                disabled={selectedPageNumber >= pages.length}
+                data-testid="button-full-next"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </DialogHeader>
+          <ScrollArea className="h-[calc(95vh-80px)]">
+            {currentPage?.imagePath && selectedResult?.verification.documentId ? (
+              <PageImageOverlay
+                page={currentPage}
+                imageUrl={`/api/documents/${selectedResult.verification.documentId}/pages/${currentPage.pageNumber}/image`}
+                discrepancyOverlays={
+                  selectedResult.discrepancies.flatMap(d => {
+                    const overlays: DiscrepancyOverlay[] = [];
+                    if (d.mpcBoundingBox && d.mpcBoundingBox.pageNumber === selectedPageNumber) {
+                      overlays.push({
+                        id: `${d.id}-mpc`,
+                        fieldName: `${d.fieldName} (MPC)`,
+                        severity: d.severity,
+                        description: `MPC: ${d.mpcValue || 'N/A'}`,
+                        boundingBox: d.mpcBoundingBox
+                      });
+                    }
+                    if (d.bmrBoundingBox && d.bmrBoundingBox.pageNumber === selectedPageNumber) {
+                      overlays.push({
+                        id: `${d.id}-bmr`,
+                        fieldName: `${d.fieldName} (BMR)`,
+                        severity: d.severity,
+                        description: `BMR: ${d.bmrValue || 'N/A'}`,
+                        boundingBox: d.bmrBoundingBox
+                      });
+                    }
+                    return overlays;
+                  })
+                }
+              />
+            ) : (
+              <div className="flex items-center justify-center h-96 text-muted-foreground">
+                No image available
+              </div>
+            )}
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
