@@ -75,11 +75,13 @@ export function PageImageOverlay({ page, imageUrl, discrepancyOverlays = [] }: P
     switch (severity) {
       case 'critical':
       case 'high':
+      case 'major':
         return 'rgba(239, 68, 68, 0.3)';
       case 'medium':
         return 'rgba(249, 115, 22, 0.3)';
       case 'low':
       case 'info':
+      case 'minor':
         return 'rgba(234, 179, 8, 0.3)';
       default:
         return 'rgba(239, 68, 68, 0.3)';
@@ -90,11 +92,13 @@ export function PageImageOverlay({ page, imageUrl, discrepancyOverlays = [] }: P
     switch (severity) {
       case 'critical':
       case 'high':
+      case 'major':
         return '2px solid rgb(239, 68, 68)';
       case 'medium':
         return '2px solid rgb(249, 115, 22)';
       case 'low':
       case 'info':
+      case 'minor':
         return '2px solid rgb(234, 179, 8)';
       default:
         return '2px solid rgb(239, 68, 68)';
