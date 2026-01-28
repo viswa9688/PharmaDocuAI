@@ -1476,17 +1476,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       };
 
+      // Form fields with bounding boxes from Document AI
+      const pageFormFields: Array<{ pageNumber: number; formFields: any[] }> = [];
+      let usedDocumentAI = false;
+      
       // Use Document AI if available, otherwise use pdfjs-dist for text extraction
       if (documentAI) {
         try {
           console.log(`[BMR-VERIFY] Using Document AI for text extraction`);
-          const document = await documentAI.processDocument(pdfBuffer);
-          const totalPages = documentAI.getTotalPages(document);
+          const docAIDocument = await documentAI.processDocument(pdfBuffer);
+          const totalPages = documentAI.getTotalPages(docAIDocument);
+          usedDocumentAI = true;
           
           for (let i = 0; i < totalPages; i++) {
-            const pageText = documentAI.extractPageText(document, i);
+            const pageText = documentAI.extractPageText(docAIDocument, i);
             console.log(`[BMR-VERIFY] Page ${i + 1} extracted, text length: ${pageText.length}`);
             pageTexts.push({ pageNumber: i + 1, text: pageText });
+            
+            // Extract form fields with bounding boxes
+            try {
+              const extraction = documentAI.extractPageData(docAIDocument, i);
+              if (extraction && extraction.formFields && extraction.formFields.length > 0) {
+                console.log(`[BMR-VERIFY] Page ${i + 1}: extracted ${extraction.formFields.length} form fields with bounding boxes`);
+                pageFormFields.push({
+                  pageNumber: i + 1,
+                  formFields: extraction.formFields.map((f: any) => ({
+                    fieldName: f.fieldName,
+                    fieldValue: f.fieldValue,
+                    confidence: f.confidence,
+                    nameBoundingBox: f.nameBoundingBox,
+                    valueBoundingBox: f.valueBoundingBox
+                  }))
+                });
+              }
+            } catch (formFieldError: any) {
+              console.warn(`[BMR-VERIFY] Page ${i + 1} form field extraction failed: ${formFieldError.message}`);
+            }
           }
         } catch (docAIError: any) {
           console.warn(`[BMR-VERIFY] Document AI failed: ${docAIError.message}, using pdfjs-dist fallback`);
@@ -1508,12 +1533,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Run verification
-      const result = await bmrVerificationService.processAndVerify(pageTexts);
+      // Run verification - use method with bounding boxes if we have form fields from Document AI
+      const result = usedDocumentAI && pageFormFields.length > 0
+        ? await bmrVerificationService.processAndVerifyWithBounds(pageTexts, pageFormFields)
+        : await bmrVerificationService.processAndVerify(pageTexts);
       console.log(`[BMR-VERIFY] Verification result:`, { 
         mpcPage: result.mpcPageNumber, 
         bmrPage: result.bmrPageNumber, 
-        error: result.error 
+        error: result.error,
+        usedBoundingBoxes: usedDocumentAI && pageFormFields.length > 0
       });
 
       if (result.error) {
@@ -1534,7 +1562,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return;
       }
 
-      // Store discrepancies
+      // Store discrepancies with bounding boxes
       for (const discrepancy of result.verificationResult.discrepancies) {
         await storage.createBMRDiscrepancy({
           verificationId,
@@ -1544,6 +1572,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           severity: discrepancy.severity,
           description: discrepancy.description,
           section: discrepancy.section,
+          mpcBoundingBox: discrepancy.mpcBoundingBox || null,
+          bmrBoundingBox: discrepancy.bmrBoundingBox || null,
         });
       }
 

@@ -473,6 +473,15 @@ export const bmrVerifications = pgTable("bmr_verifications", {
   extractedBmrData: jsonb("extracted_bmr_data").$type<Record<string, any>>(),
 });
 
+// Bounding box type for visual highlighting
+export type DiscrepancyBoundingBox = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  pageNumber: number;
+};
+
 // Individual discrepancies found during verification
 export const bmrDiscrepancies = pgTable("bmr_discrepancies", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -483,6 +492,8 @@ export const bmrDiscrepancies = pgTable("bmr_discrepancies", {
   severity: text("severity").notNull(),
   description: text("description").notNull(),
   section: text("section"),
+  mpcBoundingBox: jsonb("mpc_bounding_box").$type<DiscrepancyBoundingBox>(),
+  bmrBoundingBox: jsonb("bmr_bounding_box").$type<DiscrepancyBoundingBox>(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

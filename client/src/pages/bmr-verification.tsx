@@ -9,7 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { PageImageOverlay } from "@/components/page-image-overlay";
+import { PageImageOverlay, type DiscrepancyOverlay } from "@/components/page-image-overlay";
 import { 
   Upload, 
   FileCheck, 
@@ -470,10 +470,36 @@ export default function BMRVerificationPage() {
 
                       <Card className="overflow-hidden">
                         <ScrollArea className="h-[500px]">
-                          {currentPage?.imagePath ? (
+                          {currentPage?.imagePath && selectedResult.verification.documentId ? (
                             <PageImageOverlay
                               page={currentPage}
-                              imageUrl={`/api/images/${encodeURIComponent(currentPage.imagePath)}`}
+                              imageUrl={`/api/documents/${selectedResult.verification.documentId}/pages/${currentPage.pageNumber}/image`}
+                              discrepancyOverlays={
+                                // Filter discrepancies that have bounding boxes for the current page
+                                selectedResult.discrepancies
+                                  .filter(d => {
+                                    // Check if MPC bounding box is on this page
+                                    const mpcOnPage = d.mpcBoundingBox && 
+                                      d.mpcBoundingBox.pageNumber === selectedPageNumber;
+                                    // Check if BMR bounding box is on this page
+                                    const bmrOnPage = d.bmrBoundingBox && 
+                                      d.bmrBoundingBox.pageNumber === selectedPageNumber;
+                                    return mpcOnPage || bmrOnPage;
+                                  })
+                                  .map(d => {
+                                    // Use the bounding box for this page
+                                    const bbox = (d.mpcBoundingBox?.pageNumber === selectedPageNumber)
+                                      ? d.mpcBoundingBox
+                                      : d.bmrBoundingBox;
+                                    return {
+                                      id: d.id,
+                                      fieldName: d.fieldName,
+                                      severity: d.severity,
+                                      description: d.description,
+                                      boundingBox: bbox!
+                                    } as DiscrepancyOverlay;
+                                  })
+                              }
                             />
                           ) : (
                             <div className="flex items-center justify-center h-96 text-muted-foreground">

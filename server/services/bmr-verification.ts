@@ -2,13 +2,40 @@ import type {
   BMRVerification, 
   BMRDiscrepancy, 
   InsertBMRDiscrepancy,
-  DiscrepancySeverity 
+  DiscrepancySeverity,
+  DiscrepancyBoundingBox
 } from "@shared/schema";
+
+// Form field with bounding box from Document AI
+export interface FormFieldWithBounds {
+  fieldName: string;
+  fieldValue: string;
+  confidence: number;
+  nameBoundingBox?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  valueBoundingBox?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+}
+
+// Extracted field with optional bounding box
+export interface ExtractedFieldWithBounds {
+  value: string;
+  boundingBox?: DiscrepancyBoundingBox;
+}
 
 export interface ExtractedDocumentData {
   documentType: "master_product_card" | "bmr" | "unknown";
   pageNumber: number;
   fields: Record<string, string>;
+  fieldsWithBounds?: Record<string, ExtractedFieldWithBounds>;
   confidence: number;
 }
 
@@ -197,6 +224,60 @@ export class BMRVerificationService {
     return fields;
   }
 
+  // Extract fields from Document AI form fields with bounding boxes
+  extractFieldsWithBounds(
+    formFields: FormFieldWithBounds[],
+    pageNumber: number
+  ): Record<string, ExtractedFieldWithBounds> {
+    const fieldsWithBounds: Record<string, ExtractedFieldWithBounds> = {};
+    
+    // Map of field name patterns to standardized field keys
+    const fieldNameMappings: Array<{ patterns: RegExp[]; key: string }> = [
+      { patterns: [/product\s*name/i, /product\s*title/i], key: "product_name" },
+      { patterns: [/product\s*code/i, /sku/i, /product\s*id/i], key: "product_code" },
+      { patterns: [/batch\s*size/i, /batch\s*quantity/i, /batch\s*in\s*total/i], key: "batch_size" },
+      { patterns: [/unit\s*of\s*measure/i, /uom/i], key: "unit_of_measure" },
+      { patterns: [/expiry\s*date/i, /exp\.?\s*date/i, /expiration/i], key: "expiry_date" },
+      { patterns: [/shelf\s*life/i], key: "shelf_life" },
+      { patterns: [/physical\s*description/i, /appearance/i, /description/i], key: "physical_description" },
+      { patterns: [/dimensions?/i, /weight/i], key: "dimensions_weight" },
+      { patterns: [/active\s*ingredients?/i, /composition/i], key: "active_ingredients" },
+      { patterns: [/storage\s*conditions?/i, /storage/i], key: "storage_conditions" },
+      { patterns: [/manufacturing\s*location/i, /facility/i, /location/i], key: "manufacturing_location" },
+      { patterns: [/equipment\s*required/i, /equipment/i], key: "equipment_required" },
+      { patterns: [/quality\s*control/i, /qc\s*checkpoints?/i], key: "quality_control_checkpoints" },
+    ];
+    
+    for (const formField of formFields) {
+      const fieldName = formField.fieldName.toLowerCase().trim();
+      
+      for (const { patterns, key } of fieldNameMappings) {
+        if (fieldsWithBounds[key]) continue; // Already found this field
+        
+        for (const pattern of patterns) {
+          if (pattern.test(fieldName)) {
+            const value = formField.fieldValue.trim();
+            if (value && value.length > 0) {
+              fieldsWithBounds[key] = {
+                value,
+                boundingBox: formField.valueBoundingBox ? {
+                  x: formField.valueBoundingBox.x,
+                  y: formField.valueBoundingBox.y,
+                  width: formField.valueBoundingBox.width,
+                  height: formField.valueBoundingBox.height,
+                  pageNumber
+                } : undefined
+              };
+            }
+            break;
+          }
+        }
+      }
+    }
+    
+    return fieldsWithBounds;
+  }
+
   extractRawMaterials(text: string): Array<{ code: string; name: string; quantity: string }> {
     const materials: Array<{ code: string; name: string; quantity: string }> = [];
     const lines = text.split('\n');
@@ -329,6 +410,85 @@ export class BMRVerificationService {
     };
   }
 
+  // Compare fields with bounding boxes
+  compareFieldsWithBounds(
+    mpcFieldsWithBounds: Record<string, ExtractedFieldWithBounds>,
+    bmrFieldsWithBounds: Record<string, ExtractedFieldWithBounds>,
+    mpcFields: Record<string, string>,
+    bmrFields: Record<string, string>
+  ): VerificationResult {
+    const discrepancies: Omit<InsertBMRDiscrepancy, "verificationId">[] = [];
+    const matchedFields: string[] = [];
+    
+    const fieldsToCompare = [
+      { key: "product_name", section: "Product Information" },
+      { key: "product_code", section: "Product Information" },
+      { key: "batch_size", section: "Product Information" },
+      { key: "unit_of_measure", section: "Product Information" },
+      { key: "expiry_date", section: "Product Information" },
+      { key: "shelf_life", section: "Product Information" },
+      { key: "physical_description", section: "Specifications" },
+      { key: "dimensions_weight", section: "Specifications" },
+      { key: "active_ingredients", section: "Specifications" },
+      { key: "storage_conditions", section: "Specifications" },
+      { key: "manufacturing_location", section: "Manufacturing Details" },
+      { key: "equipment_required", section: "Manufacturing Details" },
+      { key: "quality_control_checkpoints", section: "Manufacturing Details" },
+    ];
+    
+    let fieldsActuallyCompared = 0;
+    
+    for (const { key, section } of fieldsToCompare) {
+      // Use form field extracted values if available, otherwise fall back to text extraction
+      const mpcValue = mpcFieldsWithBounds[key]?.value || mpcFields[key];
+      const bmrValue = bmrFieldsWithBounds[key]?.value || bmrFields[key];
+      
+      if (!mpcValue && !bmrValue) {
+        continue;
+      }
+      
+      fieldsActuallyCompared++;
+      
+      const normalizedMpc = this.normalizeValue(mpcValue);
+      const normalizedBmr = this.normalizeValue(bmrValue);
+      
+      if (normalizedMpc === normalizedBmr) {
+        matchedFields.push(key);
+      } else {
+        const severity = this.determineSeverity(key);
+        const fieldDisplayName = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        
+        let description = "";
+        if (!mpcValue && bmrValue) {
+          description = `Field "${fieldDisplayName}" is present in BMR but missing in Master Product Card`;
+        } else if (mpcValue && !bmrValue) {
+          description = `Field "${fieldDisplayName}" is present in Master Product Card but missing in BMR`;
+        } else {
+          description = `Field "${fieldDisplayName}" has different values: MPC="${mpcValue}" vs BMR="${bmrValue}"`;
+        }
+        
+        discrepancies.push({
+          fieldName: key,
+          mpcValue: mpcValue || null,
+          bmrValue: bmrValue || null,
+          severity,
+          description,
+          section,
+          mpcBoundingBox: mpcFieldsWithBounds[key]?.boundingBox || null,
+          bmrBoundingBox: bmrFieldsWithBounds[key]?.boundingBox || null,
+        });
+      }
+    }
+    
+    return {
+      discrepancies,
+      matchedFields,
+      totalFieldsCompared: fieldsActuallyCompared,
+      mpcData: mpcFields,
+      bmrData: bmrFields,
+    };
+  }
+
   async processAndVerify(
     pageTexts: Array<{ pageNumber: number; text: string }>
   ): Promise<{
@@ -376,6 +536,80 @@ export class BMRVerificationService {
     const bmrFields = this.extractFieldsFromText(bmrPage.text);
     
     const verificationResult = this.compareFields(mpcFields, bmrFields);
+    
+    return {
+      mpcPageNumber: mpcPage.pageNumber,
+      bmrPageNumber: bmrPage.pageNumber,
+      verificationResult,
+    };
+  }
+
+  // Process and verify with Document AI form fields for bounding boxes
+  async processAndVerifyWithBounds(
+    pageTexts: Array<{ pageNumber: number; text: string }>,
+    pageFormFields: Array<{ pageNumber: number; formFields: FormFieldWithBounds[] }>
+  ): Promise<{
+    mpcPageNumber: number | null;
+    bmrPageNumber: number | null;
+    verificationResult: VerificationResult | null;
+    error?: string;
+  }> {
+    let mpcPage: { pageNumber: number; text: string } | null = null;
+    let bmrPage: { pageNumber: number; text: string } | null = null;
+    
+    for (const page of pageTexts) {
+      const docType = this.identifyDocumentType(page.text);
+      
+      if (docType === "master_product_card" && !mpcPage) {
+        mpcPage = page;
+      } else if (docType === "bmr" && !bmrPage) {
+        bmrPage = page;
+      }
+      
+      if (mpcPage && bmrPage) {
+        break;
+      }
+    }
+    
+    if (!mpcPage) {
+      return {
+        mpcPageNumber: null,
+        bmrPageNumber: bmrPage?.pageNumber || null,
+        verificationResult: null,
+        error: "Could not identify Master Product Card in the uploaded document"
+      };
+    }
+    
+    if (!bmrPage) {
+      return {
+        mpcPageNumber: mpcPage.pageNumber,
+        bmrPageNumber: null,
+        verificationResult: null,
+        error: "Could not identify Batch Manufacturing Record in the uploaded document"
+      };
+    }
+    
+    // Extract text-based fields
+    const mpcFields = this.extractFieldsFromText(mpcPage.text);
+    const bmrFields = this.extractFieldsFromText(bmrPage.text);
+    
+    // Extract form fields with bounding boxes
+    const mpcFormFields = pageFormFields.find(p => p.pageNumber === mpcPage!.pageNumber);
+    const bmrFormFields = pageFormFields.find(p => p.pageNumber === bmrPage!.pageNumber);
+    
+    const mpcFieldsWithBounds = mpcFormFields 
+      ? this.extractFieldsWithBounds(mpcFormFields.formFields, mpcPage.pageNumber)
+      : {};
+    const bmrFieldsWithBounds = bmrFormFields 
+      ? this.extractFieldsWithBounds(bmrFormFields.formFields, bmrPage.pageNumber)
+      : {};
+    
+    const verificationResult = this.compareFieldsWithBounds(
+      mpcFieldsWithBounds,
+      bmrFieldsWithBounds,
+      mpcFields,
+      bmrFields
+    );
     
     return {
       mpcPageNumber: mpcPage.pageNumber,

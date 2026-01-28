@@ -1,12 +1,22 @@
 import { useState, useRef, useEffect } from "react";
-import type { Page, VisualAnomaly, BoundingBox } from "@shared/schema";
+import type { Page, VisualAnomaly, BoundingBox, DiscrepancyBoundingBox } from "@shared/schema";
+
+// Discrepancy overlay data for BMR verification
+export interface DiscrepancyOverlay {
+  id: string;
+  fieldName: string;
+  severity: string;
+  description: string;
+  boundingBox: DiscrepancyBoundingBox;
+}
 
 interface PageImageOverlayProps {
   page: Page;
   imageUrl: string;
+  discrepancyOverlays?: DiscrepancyOverlay[];
 }
 
-export function PageImageOverlay({ page, imageUrl }: PageImageOverlayProps) {
+export function PageImageOverlay({ page, imageUrl, discrepancyOverlays = [] }: PageImageOverlayProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const [imageLoaded, setImageLoaded] = useState(false);
@@ -126,6 +136,26 @@ export function PageImageOverlay({ page, imageUrl }: PageImageOverlayProps) {
             }}
             title={anomaly.description || `${anomaly.type} detected`}
             data-testid={`overlay-anomaly-${index}`}
+          />
+        );
+      })}
+
+      {/* Discrepancy overlays for BMR verification */}
+      {imageLoaded && imageDimensions.naturalWidth > 0 && discrepancyOverlays.map((discrepancy, index) => {
+        const scaledBox = scaleBox(discrepancy.boundingBox);
+        
+        return (
+          <div
+            key={`discrepancy-${discrepancy.id || index}`}
+            className="absolute pointer-events-none"
+            style={{
+              ...scaledBox,
+              backgroundColor: getSeverityColor(discrepancy.severity),
+              border: getSeverityBorder(discrepancy.severity),
+              borderRadius: '4px',
+            }}
+            title={discrepancy.description || `${discrepancy.fieldName} discrepancy`}
+            data-testid={`overlay-discrepancy-${index}`}
           />
         );
       })}
