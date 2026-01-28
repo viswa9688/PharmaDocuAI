@@ -265,13 +265,15 @@ export class BMRVerificationService {
             const value = formField.fieldValue.trim();
             if (value && value.length > 0) {
               console.log(`[BMR-BOUNDS]   Matched: "${fieldName}" -> ${key}, hasBounds: ${!!formField.valueBoundingBox}`);
+              // PDF images are rendered at 2x scale, so multiply coordinates by 2
+              const PDF_SCALE = 2;
               fieldsWithBounds[key] = {
                 value,
                 boundingBox: formField.valueBoundingBox ? {
-                  x: formField.valueBoundingBox.x,
-                  y: formField.valueBoundingBox.y,
-                  width: formField.valueBoundingBox.width,
-                  height: formField.valueBoundingBox.height,
+                  x: formField.valueBoundingBox.x * PDF_SCALE,
+                  y: formField.valueBoundingBox.y * PDF_SCALE,
+                  width: formField.valueBoundingBox.width * PDF_SCALE,
+                  height: formField.valueBoundingBox.height * PDF_SCALE,
                   pageNumber
                 } : undefined
               };
@@ -305,11 +307,13 @@ export class BMRVerificationService {
       
       if (fieldValue === normalizedValue && formField.valueBoundingBox) {
         console.log(`[BMR-BOUNDS] Found exact bounding box for value "${value.substring(0, 30)}..."`);
+        // PDF images are rendered at 2x scale
+        const PDF_SCALE = 2;
         return {
-          x: formField.valueBoundingBox.x,
-          y: formField.valueBoundingBox.y,
-          width: formField.valueBoundingBox.width,
-          height: formField.valueBoundingBox.height,
+          x: formField.valueBoundingBox.x * PDF_SCALE,
+          y: formField.valueBoundingBox.y * PDF_SCALE,
+          width: formField.valueBoundingBox.width * PDF_SCALE,
+          height: formField.valueBoundingBox.height * PDF_SCALE,
           pageNumber
         };
       }
@@ -326,11 +330,13 @@ export class BMRVerificationService {
       
       if (containsMatch && formField.valueBoundingBox) {
         console.log(`[BMR-BOUNDS] Found substring bounding box for value "${value.substring(0, 30)}..."`);
+        // PDF images are rendered at 2x scale
+        const PDF_SCALE = 2;
         return {
-          x: formField.valueBoundingBox.x,
-          y: formField.valueBoundingBox.y,
-          width: formField.valueBoundingBox.width,
-          height: formField.valueBoundingBox.height,
+          x: formField.valueBoundingBox.x * PDF_SCALE,
+          y: formField.valueBoundingBox.y * PDF_SCALE,
+          width: formField.valueBoundingBox.width * PDF_SCALE,
+          height: formField.valueBoundingBox.height * PDF_SCALE,
           pageNumber
         };
       }
