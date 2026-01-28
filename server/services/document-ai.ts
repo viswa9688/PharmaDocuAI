@@ -463,12 +463,20 @@ export class DocumentAIService {
     // Extract basic text
     const extractedText = this.extractPageText(document, pageNumber);
 
+    console.log(`[DOC-AI] Page ${pageNumber + 1}: Document AI dimensions = ${pageWidth}x${pageHeight} ${unit}`);
+    
     // Extract all rich features
     const tables = this.extractTables(page, document.text, pageWidth, pageHeight);
     const formFields = this.extractFormFields(page, document.text, pageWidth, pageHeight);
     const checkboxes = this.extractCheckboxes(page, document.text, pageWidth, pageHeight);
     const handwrittenRegions = this.extractHandwrittenRegions(page, document.text, pageWidth, pageHeight);
     const signatures = this.extractSignatures(page, pageWidth, pageHeight);
+    
+    // Debug: log a sample bounding box
+    if (formFields.length > 0 && formFields[0].valueBoundingBox) {
+      const bb = formFields[0].valueBoundingBox;
+      console.log(`[DOC-AI] Sample bounding box for "${formFields[0].fieldName}": x=${bb.x.toFixed(2)}, y=${bb.y.toFixed(2)}, w=${bb.width.toFixed(2)}, h=${bb.height.toFixed(2)}`);
+    }
 
     // Extract text blocks with positions
     const textBlocks: Array<{text: string; boundingBox?: BoundingBox; confidence: number}> = [];

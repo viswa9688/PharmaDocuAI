@@ -62,6 +62,10 @@ export function PageImageOverlay({ page, imageUrl, discrepancyOverlays = [] }: P
 
     const scaleX = imageDimensions.width / imageDimensions.naturalWidth;
     const scaleY = imageDimensions.height / imageDimensions.naturalHeight;
+    
+    console.log(`[OVERLAY] Image: display=${imageDimensions.width.toFixed(0)}x${imageDimensions.height.toFixed(0)}, natural=${imageDimensions.naturalWidth}x${imageDimensions.naturalHeight}`);
+    console.log(`[OVERLAY] Box input: x=${box.x.toFixed(1)}, y=${box.y.toFixed(1)}, w=${box.width.toFixed(1)}, h=${box.height.toFixed(1)}`);
+    console.log(`[OVERLAY] Box output: left=${(box.x * scaleX).toFixed(1)}px, top=${(box.y * scaleY).toFixed(1)}px`);
 
     return {
       left: `${box.x * scaleX}px`,

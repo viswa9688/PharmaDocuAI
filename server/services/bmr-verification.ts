@@ -264,16 +264,22 @@ export class BMRVerificationService {
           if (pattern.test(fieldName)) {
             const value = formField.fieldValue.trim();
             if (value && value.length > 0) {
-              console.log(`[BMR-BOUNDS]   Matched: "${fieldName}" -> ${key}, hasBounds: ${!!formField.valueBoundingBox}`);
-              // PDF images are rendered at 2x scale, so multiply coordinates by 2
+              // Document AI returns normalized coordinates (0-1) which are converted to page dimension pixels
+              // Our PDF images are rendered at scale 2 (144 DPI effective), so we need to multiply by 2
               const PDF_SCALE = 2;
+              const bb = formField.valueBoundingBox;
+              if (bb) {
+                console.log(`[BMR-BOUNDS]   Matched: "${fieldName}" -> ${key}`);
+                console.log(`[BMR-BOUNDS]     Raw (from Doc AI): x=${bb.x.toFixed(1)}, y=${bb.y.toFixed(1)}, w=${bb.width.toFixed(1)}, h=${bb.height.toFixed(1)}`);
+                console.log(`[BMR-BOUNDS]     Scaled (x${PDF_SCALE}): x=${(bb.x * PDF_SCALE).toFixed(1)}, y=${(bb.y * PDF_SCALE).toFixed(1)}, w=${(bb.width * PDF_SCALE).toFixed(1)}, h=${(bb.height * PDF_SCALE).toFixed(1)}`);
+              }
               fieldsWithBounds[key] = {
                 value,
-                boundingBox: formField.valueBoundingBox ? {
-                  x: formField.valueBoundingBox.x * PDF_SCALE,
-                  y: formField.valueBoundingBox.y * PDF_SCALE,
-                  width: formField.valueBoundingBox.width * PDF_SCALE,
-                  height: formField.valueBoundingBox.height * PDF_SCALE,
+                boundingBox: bb ? {
+                  x: bb.x * PDF_SCALE,
+                  y: bb.y * PDF_SCALE,
+                  width: bb.width * PDF_SCALE,
+                  height: bb.height * PDF_SCALE,
                   pageNumber
                 } : undefined
               };
