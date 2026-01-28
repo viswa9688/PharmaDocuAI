@@ -331,7 +331,13 @@ export default function BMRVerificationPage() {
                         </h3>
                         <div className="space-y-2">
                           {selectedResult.discrepancies.map((d, idx) => (
-                            <div key={d.id || idx} className="p-3 rounded-lg border bg-card">
+                            <div key={d.id || idx} className={`p-3 rounded-lg border ${
+                              d.severity === "critical" 
+                                ? "border-red-500 bg-red-100 dark:bg-red-950/50" 
+                                : d.severity === "major"
+                                ? "border-orange-500 bg-orange-100 dark:bg-orange-950/50"
+                                : "bg-card"
+                            }`}>
                               <div className="flex items-start justify-between gap-2">
                                 <div className="flex-1">
                                   <div className="flex items-center gap-2 mb-1">

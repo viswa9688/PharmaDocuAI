@@ -333,7 +333,7 @@ export default function RawMaterialVerificationPage() {
                         key={result.id || index}
                         className={`p-4 rounded-lg border ${
                           result.withinLimits === false
-                            ? "border-destructive/50 bg-destructive/5"
+                            ? "border-red-500 bg-red-100 dark:bg-red-950/50"
                             : result.withinLimits === true
                             ? "border-green-500/30 bg-green-500/5"
                             : "bg-muted/30"
