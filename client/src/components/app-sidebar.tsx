@@ -9,13 +9,18 @@ import {
   SidebarMenuItem,
   SidebarHeader,
 } from "@/components/ui/sidebar";
-import { Upload, FileText, FolderOpen, Settings, FileCheck, Scale, Calendar, LayoutDashboard, History, CheckCircle } from "lucide-react";
+import { Upload, FileText, FolderOpen, Settings, FileCheck, Scale, Calendar, LayoutDashboard, History, CheckCircle, Home } from "lucide-react";
 import { Link, useLocation } from "wouter";
 
 const mainMenuItems = [
   {
-    title: "Dashboard",
+    title: "Home",
     url: "/",
+    icon: Home,
+  },
+  {
+    title: "Dashboard",
+    url: "/dashboard",
     icon: LayoutDashboard,
   },
   {
@@ -91,7 +96,7 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {mainMenuItems.map((item) => {
-                const isActive = location === item.url || (item.url === "/" && location === "/dashboard");
+                const isActive = location === item.url;
                 return (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton asChild data-active={isActive}>

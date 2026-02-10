@@ -7,6 +7,7 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import NotFound from "@/pages/not-found";
+import Landing from "@/pages/landing";
 import Upload from "@/pages/upload";
 import Documents from "@/pages/documents";
 import DocumentViewer from "@/pages/document-viewer";
@@ -22,7 +23,7 @@ import Approved from "@/pages/approved";
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={Dashboard} />
+      <Route path="/" component={Landing} />
       <Route path="/upload" component={Upload} />
       <Route path="/documents" component={Documents} />
       <Route path="/documents/:id" component={DocumentViewer} />
