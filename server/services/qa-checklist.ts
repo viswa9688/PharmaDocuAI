@@ -26,6 +26,21 @@ export interface QAChecklistInput {
   userDeclaredMismatchCount: number;
 }
 
+const BMR_MPC_KEYWORDS = [
+  "bmr", "batch manufacturing record", "master product card", "mpc",
+  "batch record", "manufacturing record", "master card", "product card",
+  "batch_record", "master_product_card",
+];
+
+function isFromBmrOrMpcPage(alert: ValidationAlert): boolean {
+  const sectionType = (alert.source?.sectionType || "").toLowerCase();
+  const title = (alert.title || "").toLowerCase();
+  if (alert.ruleId === "bmr_verification") return true;
+  if (BMR_MPC_KEYWORDS.some(kw => sectionType.includes(kw))) return true;
+  if (BMR_MPC_KEYWORDS.some(kw => title.includes(kw))) return true;
+  return false;
+}
+
 const QA_CHECK_DEFINITIONS = [
   {
     id: "qa_01",
@@ -35,11 +50,17 @@ const QA_CHECK_DEFINITIONS = [
     category: "discrepancies" as const,
     alertCategory: null as AlertCategory | null,
     getRelatedAlerts: (input: QAChecklistInput): ValidationAlert[] => {
-      return input.allAlerts.filter(a => a.category === "consistency_error" || a.category === "data_quality");
+      return input.allAlerts.filter(a =>
+        (a.category === "consistency_error" || a.category === "data_quality") &&
+        isFromBmrOrMpcPage(a)
+      );
     },
     evaluate: (input: QAChecklistInput): { status: QACheckItemStatus; count: number; details: string | null } => {
       if (!input.hasBmrVerification) {
-        const discrepancyAlerts = input.allAlerts.filter(a => a.category === "consistency_error" || a.category === "data_quality");
+        const discrepancyAlerts = input.allAlerts.filter(a =>
+          (a.category === "consistency_error" || a.category === "data_quality") &&
+          isFromBmrOrMpcPage(a)
+        );
         if (discrepancyAlerts.length > 0) {
           return { status: "fail", count: discrepancyAlerts.length, details: `${discrepancyAlerts.length} consistency issues detected` };
         }
