@@ -87,6 +87,8 @@ export const documents = pgTable("documents", {
   batchDateBounds: jsonb("batch_date_bounds").$type<BatchDateBounds>(),
   // QA Checklist evaluation results
   qaChecklist: jsonb("qa_checklist").$type<QAChecklist>(),
+  // Verification alerts from BMR/Raw Material/Batch Allocation auto-verification
+  verificationAlerts: jsonb("verification_alerts").$type<ValidationAlert[]>(),
   // Approval status for batch records
   isApproved: boolean("is_approved").default(false).notNull(),
   approvedBy: varchar("approved_by").references(() => users.id, { onDelete: "set null" }),

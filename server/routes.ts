@@ -15,7 +15,12 @@ import { rawMaterialVerificationService } from "./services/raw-material-verifica
 import { batchAllocationVerificationService } from "./services/batch-allocation-verification";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { evaluateQAChecklist, type QAChecklistInput } from "./services/qa-checklist";
-import type { ProcessingEventType } from "@shared/schema";
+import {
+  convertBMRDiscrepanciesToAlerts,
+  convertRawMaterialResultsToAlerts,
+  convertBatchAllocationToAlerts,
+} from "./services/verification-alerts-converter";
+import type { ProcessingEventType, ValidationAlert, AlertSeverity, AlertCategory } from "@shared/schema";
 
 // Use PostgreSQL database storage for persistence
 const storage = new DBStorage();
@@ -600,6 +605,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await storage.updateDocument(req.params.id, { batchDateBounds });
       }
 
+      // Merge stored verification alerts (from BMR/RawMaterial/BatchAllocation auto-verification)
+      const storedVerificationAlerts = (doc.verificationAlerts as ValidationAlert[]) || [];
+      if (storedVerificationAlerts.length > 0) {
+        summary.crossPageIssues = [
+          ...summary.crossPageIssues,
+          ...storedVerificationAlerts,
+        ];
+        summary.totalAlerts += storedVerificationAlerts.length;
+        for (const alert of storedVerificationAlerts) {
+          const sev = alert.severity as AlertSeverity;
+          const cat = alert.category as AlertCategory;
+          if (sev && summary.alertsBySeverity[sev] !== undefined) {
+            summary.alertsBySeverity[sev]++;
+          }
+          if (cat && summary.alertsByCategory[cat] !== undefined) {
+            summary.alertsByCategory[cat]++;
+          }
+        }
+      }
+
       res.json({
         summary,
         pageResults,
@@ -700,27 +725,70 @@ export async function registerRoutes(app: Express): Promise<Server> {
         summary.alertsByCategory[alert.category]++;
       }
 
+      // Include stored verification alerts from auto-verification pipeline
+      const storedVerificationAlerts = (doc.verificationAlerts as ValidationAlert[]) || [];
+      if (storedVerificationAlerts.length > 0) {
+        summary.crossPageIssues = [...summary.crossPageIssues, ...storedVerificationAlerts];
+        summary.totalAlerts += storedVerificationAlerts.length;
+        for (const alert of storedVerificationAlerts) {
+          const sev = alert.severity as AlertSeverity;
+          const cat = alert.category as AlertCategory;
+          if (sev && summary.alertsBySeverity[sev] !== undefined) {
+            summary.alertsBySeverity[sev]++;
+          }
+          if (cat && summary.alertsByCategory[cat] !== undefined) {
+            summary.alertsByCategory[cat]++;
+          }
+        }
+      }
+
       const allAlerts = [
         ...pageResults.flatMap(p => p.alerts),
         ...summary.crossPageIssues,
       ];
 
-      // Check for BMR verification
-      const bmrVerifications = await storage.getAllBMRVerifications();
-      const linkedBmr = bmrVerifications.find(v => v.documentId === req.params.id);
-      let bmrDiscrepancyCount = 0;
-      if (linkedBmr) {
-        const discs = await storage.getDiscrepanciesByVerification(linkedBmr.id);
-        bmrDiscrepancyCount = discs.length;
+      // Check for BMR verification (from auto-verify alerts or standalone uploads)
+      const bmrVerificationAlerts = storedVerificationAlerts.filter(a => a.ruleId === "bmr_verification");
+      let bmrDiscrepancyCount = bmrVerificationAlerts.filter(a => a.severity !== "info").length;
+      let hasBmrVerification = bmrDiscrepancyCount > 0 || bmrVerificationAlerts.length > 0;
+
+      if (!hasBmrVerification) {
+        const bmrVerifs = await storage.getAllBMRVerifications();
+        const linkedBmr = bmrVerifs.find(v => v.documentId === req.params.id);
+        if (linkedBmr) {
+          hasBmrVerification = true;
+          const discs = await storage.getDiscrepanciesByVerification(linkedBmr.id);
+          bmrDiscrepancyCount = discs.length;
+        }
       }
 
-      // Check for raw material verification
-      const rmVerifications = await storage.getAllRawMaterialVerifications();
-      const linkedRm = rmVerifications.find(v => v.documentId === req.params.id);
+      // Check for raw material verification (from auto-verify alerts or standalone uploads)
+      const rawMatAlerts = storedVerificationAlerts.filter(a => a.ruleId === "raw_material_verification");
+      let hasRawMaterialVerification = rawMatAlerts.length > 0;
+      let rawMaterialOutOfLimits = rawMatAlerts.filter(a => a.category === "range_violation" && a.severity !== "info").length;
 
-      // Check for batch allocation verification
-      const baVerifications = await storage.getAllBatchAllocationVerifications();
-      const linkedBa = baVerifications.find(v => v.documentId === req.params.id);
+      if (!hasRawMaterialVerification) {
+        const rmVerifications = await storage.getAllRawMaterialVerifications();
+        const linkedRm = rmVerifications.find(v => v.documentId === req.params.id);
+        if (linkedRm) {
+          hasRawMaterialVerification = true;
+          rawMaterialOutOfLimits = linkedRm.materialsOutOfLimits || 0;
+        }
+      }
+
+      // Check for batch allocation verification (from auto-verify alerts or standalone uploads)
+      const batchAllocAlerts = storedVerificationAlerts.filter(a => a.ruleId === "batch_allocation_verification");
+      let hasBatchAllocation = batchAllocAlerts.length > 0;
+      let batchAllocationValid = batchAllocAlerts.filter(a => a.severity !== "info").length === 0;
+
+      if (!hasBatchAllocation) {
+        const baVerifications = await storage.getAllBatchAllocationVerifications();
+        const linkedBa = baVerifications.find(v => v.documentId === req.params.id);
+        if (linkedBa) {
+          hasBatchAllocation = true;
+          batchAllocationValid = linkedBa.status === "completed";
+        }
+      }
 
       const missingSignatureCount = allAlerts.filter(a => 
         a.title.toLowerCase().includes("missing signature")
@@ -731,12 +799,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         validationSummary: summary,
         pageResults,
         allAlerts,
-        hasBmrVerification: !!linkedBmr,
+        hasBmrVerification,
         bmrDiscrepancyCount,
-        hasRawMaterialVerification: !!linkedRm,
-        rawMaterialOutOfLimits: linkedRm?.materialsOutOfLimits || 0,
-        hasBatchAllocation: !!linkedBa,
-        batchAllocationValid: linkedBa ? (linkedBa.status === "completed") : true,
+        hasRawMaterialVerification,
+        rawMaterialOutOfLimits,
+        hasBatchAllocation,
+        batchAllocationValid,
         totalPages: doc.totalPages || pages.length,
         hasSignatures: allAlerts.some(a => a.ruleId === "signature_required"),
         missingSignatureCount,
@@ -1346,6 +1414,147 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // ==========================================
+      // AUTO-VERIFICATION: Run BMR, Raw Material, and Batch Allocation checks
+      // ==========================================
+      let verificationAlerts: any[] = [];
+      try {
+        const storedPages = await storage.getPagesByDocument(documentId);
+        
+        const pagesWithData = storedPages.map(p => {
+          const meta = p.metadata as Record<string, any> || {};
+          return {
+            pageNumber: p.pageNumber,
+            rawText: p.extractedText || "",
+            tables: meta.extraction?.tables || [],
+            formFields: meta.extraction?.formFields || [],
+            classification: p.classification,
+          };
+        });
+
+        // 1. BMR Verification — detect MPC and BMR pages and compare
+        try {
+          let mpcPage: any = null;
+          let bmrPage: any = null;
+
+          for (const page of pagesWithData) {
+            const docType = bmrVerificationService.identifyDocumentType(page.rawText);
+            if (docType === "master_product_card" && !mpcPage) {
+              mpcPage = page;
+            } else if (docType === "bmr" && !bmrPage) {
+              bmrPage = page;
+            }
+          }
+
+          if (mpcPage && bmrPage) {
+            console.log(`[AUTO-VERIFY] BMR Verification: MPC on page ${mpcPage.pageNumber}, BMR on page ${bmrPage.pageNumber}`);
+            const mpcFields = bmrVerificationService.extractFieldsFromText(mpcPage.rawText);
+            const bmrFields = bmrVerificationService.extractFieldsFromText(bmrPage.rawText);
+            
+            let result;
+            if (mpcPage.formFields.length > 0 || bmrPage.formFields.length > 0) {
+              const mpcFieldsWithBounds = bmrVerificationService.extractFieldsWithBounds(mpcPage.formFields, mpcPage.pageNumber);
+              const bmrFieldsWithBounds = bmrVerificationService.extractFieldsWithBounds(bmrPage.formFields, bmrPage.pageNumber);
+              result = bmrVerificationService.compareFieldsWithBounds(
+                mpcFieldsWithBounds, bmrFieldsWithBounds,
+                mpcFields, bmrFields,
+                mpcPage.formFields, bmrPage.formFields,
+                mpcPage.pageNumber, bmrPage.pageNumber
+              );
+            } else {
+              result = bmrVerificationService.compareFields(mpcFields, bmrFields);
+            }
+
+            const bmrAlerts = convertBMRDiscrepanciesToAlerts(
+              result.discrepancies as any,
+              result.matchedFields,
+              mpcPage.pageNumber,
+              bmrPage.pageNumber
+            );
+            verificationAlerts.push(...bmrAlerts);
+            console.log(`[AUTO-VERIFY] BMR: ${bmrAlerts.length} alerts generated (${result.discrepancies.length} discrepancies)`);
+          } else {
+            console.log(`[AUTO-VERIFY] BMR: No MPC/BMR page pair detected, skipping`);
+          }
+        } catch (bmrError: any) {
+          console.warn("[AUTO-VERIFY] BMR verification failed:", bmrError.message);
+        }
+
+        // 2. Raw Material Verification — detect limits and actuals pages
+        try {
+          const pageClassifications = rawMaterialVerificationService.classifyPages(
+            pagesWithData.map(p => ({ pageNumber: p.pageNumber, rawText: p.rawText }))
+          );
+          
+          const limitsPages = pageClassifications.filter(pc => pc.pageType === "limits");
+          const verificationPages = pageClassifications.filter(pc => pc.pageType === "verification");
+
+          if (limitsPages.length > 0 && verificationPages.length > 0) {
+            console.log(`[AUTO-VERIFY] Raw Material: ${limitsPages.length} limits pages, ${verificationPages.length} verification pages`);
+            
+            let allLimits: any[] = [];
+            let allActuals: any[] = [];
+
+            for (const lp of limitsPages) {
+              const pageData = pagesWithData.find(p => p.pageNumber === lp.pageNumber);
+              if (pageData) {
+                const limits = rawMaterialVerificationService.extractLimitsFromPage(pageData.tables, pageData.rawText);
+                allLimits.push(...limits);
+              }
+            }
+
+            for (const vp of verificationPages) {
+              const pageData = pagesWithData.find(p => p.pageNumber === vp.pageNumber);
+              if (pageData) {
+                const actuals = rawMaterialVerificationService.extractActualsFromPage(pageData.tables, pageData.rawText);
+                allActuals.push(...actuals);
+              }
+            }
+
+            if (allLimits.length > 0 || allActuals.length > 0) {
+              const rawMatResults = rawMaterialVerificationService.compareAndValidate(allLimits, allActuals);
+              const rawMatAlerts = convertRawMaterialResultsToAlerts(rawMatResults);
+              verificationAlerts.push(...rawMatAlerts);
+              console.log(`[AUTO-VERIFY] Raw Material: ${rawMatAlerts.length} alerts generated (${rawMatResults.length} materials checked)`);
+            }
+          } else {
+            console.log(`[AUTO-VERIFY] Raw Material: No limits/verification page pair detected, skipping`);
+          }
+        } catch (rawMatError: any) {
+          console.warn("[AUTO-VERIFY] Raw material verification failed:", rawMatError.message);
+        }
+
+        // 3. Batch Allocation Verification — detect batch allocation data
+        try {
+          const allText = pagesWithData.map(p => p.rawText).join("\n");
+          const allTables = pagesWithData.flatMap(p => p.tables);
+          
+          const extraction = batchAllocationVerificationService.extractFromDocument(allText, allTables);
+          
+          const hasRelevantData = extraction.batchNumber || extraction.manufacturingDate || 
+                                  extraction.expiryDate || extraction.isCompliant !== null;
+          
+          if (hasRelevantData) {
+            console.log(`[AUTO-VERIFY] Batch Allocation: Found data - Batch: ${extraction.batchNumber}, Mfg: ${extraction.manufacturingDate}, Exp: ${extraction.expiryDate}`);
+            const batchAllocAlerts = convertBatchAllocationToAlerts(extraction);
+            verificationAlerts.push(...batchAllocAlerts);
+            console.log(`[AUTO-VERIFY] Batch Allocation: ${batchAllocAlerts.length} alerts generated`);
+          } else {
+            console.log(`[AUTO-VERIFY] Batch Allocation: No relevant data detected, skipping`);
+          }
+        } catch (batchAllocError: any) {
+          console.warn("[AUTO-VERIFY] Batch allocation verification failed:", batchAllocError.message);
+        }
+
+        // Store verification alerts in the document (and clear cached QA checklist for re-evaluation)
+        if (verificationAlerts.length > 0) {
+          await storage.updateDocument(documentId, { verificationAlerts, qaChecklist: null });
+          console.log(`[AUTO-VERIFY] Stored ${verificationAlerts.length} total verification alerts for document ${documentId}`);
+        }
+      } catch (verifyError: any) {
+        console.warn("[AUTO-VERIFY] Auto-verification pipeline error:", verifyError.message);
+      }
+
       await storage.updateDocument(documentId, { status: "completed" });
       
       // Log processing completion
@@ -1355,6 +1564,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           totalPages: processedPages.length,
           usedFallback,
           fallbackReason: usedFallback ? fallbackReason : undefined,
+          verificationAlerts: verificationAlerts.length,
         },
       });
     } catch (error: any) {
