@@ -651,6 +651,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             lowCount: 0,
             categories: {},
             overallStatus: "pass",
+            alertsBySeverity: { critical: 0, high: 0, medium: 0, low: 0 },
+            formulasChecked: 0,
+            formulaDiscrepancies: 0,
           },
         });
       }
