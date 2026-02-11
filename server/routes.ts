@@ -87,6 +87,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get('/api/users', isAuthenticated, async (req: any, res) => {
+    try {
+      const requestingUser = await storage.getUser(req.user.claims.sub);
+      if (!requestingUser || requestingUser.role !== 'admin') {
+        return res.status(403).json({ error: "Admin access required" });
+      }
+      const allUsers = await storage.getAllUsers();
+      res.json(allUsers);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.patch('/api/users/:userId/role', isAuthenticated, async (req: any, res) => {
+    try {
+      const requestingUser = await storage.getUser(req.user.claims.sub);
+      if (!requestingUser || requestingUser.role !== 'admin') {
+        return res.status(403).json({ error: "Admin access required" });
+      }
+      const { role } = req.body;
+      const validRoles = ['admin', 'reviewer', 'operator', 'viewer'];
+      if (!validRoles.includes(role)) {
+        return res.status(400).json({ error: "Invalid role" });
+      }
+      const updated = await storage.updateUserRole(req.params.userId, role);
+      if (!updated) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Get processing events for a document (audit trail)
   app.get("/api/documents/:id/events", async (req, res) => {
     try {

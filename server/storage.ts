@@ -56,6 +56,8 @@ export interface IStorage {
   // Users
   getUser(id: string): Promise<User | undefined>;
   upsertUser(userData: UpsertUser): Promise<User>;
+  getAllUsers(): Promise<User[]>;
+  updateUserRole(userId: string, role: string): Promise<User | undefined>;
 
   // Processing Events (Audit Trail)
   createProcessingEvent(event: InsertProcessingEvent): Promise<ProcessingEvent>;
@@ -323,11 +325,24 @@ export class MemStorage implements IStorage {
       firstName: userData.firstName || null,
       lastName: userData.lastName || null,
       profileImageUrl: userData.profileImageUrl || null,
+      role: userData.role || "viewer",
       createdAt: new Date(),
       updatedAt: new Date(),
     };
     this.usersMap.set(id, user);
     return user;
+  }
+
+  async getAllUsers(): Promise<User[]> {
+    return Array.from(this.usersMap.values());
+  }
+
+  async updateUserRole(userId: string, role: string): Promise<User | undefined> {
+    const user = this.usersMap.get(userId);
+    if (!user) return undefined;
+    const updated = { ...user, role, updatedAt: new Date() };
+    this.usersMap.set(userId, updated);
+    return updated;
   }
 
   // Processing Events (Audit Trail)

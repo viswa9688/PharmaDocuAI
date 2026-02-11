@@ -218,6 +218,19 @@ export class DBStorage implements IStorage {
     return user;
   }
 
+  async getAllUsers(): Promise<User[]> {
+    return await db.select().from(users).orderBy(users.createdAt);
+  }
+
+  async updateUserRole(userId: string, role: string): Promise<User | undefined> {
+    const [updated] = await db
+      .update(users)
+      .set({ role, updatedAt: new Date() })
+      .where(eq(users.id, userId))
+      .returning();
+    return updated;
+  }
+
   // Processing Events (Audit Trail)
   async createProcessingEvent(event: InsertProcessingEvent): Promise<ProcessingEvent> {
     const [created] = await db.insert(processingEvents).values(event).returning();
