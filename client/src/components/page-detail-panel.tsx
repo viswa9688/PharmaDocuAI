@@ -506,16 +506,20 @@ export function PageDetailPanel({ page, open, onOpenChange }: PageDetailPanelPro
                               <div className="flex-1 space-y-1">
                                 <div className="flex items-center gap-2">
                                   <Badge variant="outline" className="text-xs capitalize">
-                                    {signature.role.replace(/_/g, ' ')}
+                                    {(signature.role || signature.label || signature.type || 'unknown').replace(/_/g, ' ')}
                                   </Badge>
-                                  <span className="text-xs text-muted-foreground">
-                                    {signature.signatureType}
-                                  </span>
-                                  <span className="text-xs text-muted-foreground">
-                                    {Math.round(signature.confidence)}% confidence
-                                  </span>
+                                  {signature.signatureType && (
+                                    <span className="text-xs text-muted-foreground">
+                                      {signature.signatureType}
+                                    </span>
+                                  )}
+                                  {signature.confidence != null && (
+                                    <span className="text-xs text-muted-foreground">
+                                      {Math.round(signature.confidence)}% confidence
+                                    </span>
+                                  )}
                                 </div>
-                                <div className="text-sm">{signature.fieldLabel}</div>
+                                {signature.fieldLabel && <div className="text-sm">{signature.fieldLabel}</div>}
                                 {signature.associatedDate && (
                                   <div className="flex items-center gap-1 text-xs text-muted-foreground">
                                     <CheckCircle2 className="h-3 w-3 text-green-600" />
