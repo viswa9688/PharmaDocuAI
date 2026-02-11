@@ -85,6 +85,8 @@ export const documents = pgTable("documents", {
   documentType: text("document_type").default("batch_record"), // batch_record, bmr_verification, raw_material, batch_allocation
   // Batch date bounds for temporal validation
   batchDateBounds: jsonb("batch_date_bounds").$type<BatchDateBounds>(),
+  // QA Checklist evaluation results
+  qaChecklist: jsonb("qa_checklist").$type<QAChecklist>(),
   // Approval status for batch records
   isApproved: boolean("is_approved").default(false).notNull(),
   approvedBy: varchar("approved_by").references(() => users.id, { onDelete: "set null" }),
@@ -677,3 +679,31 @@ export const insertBatchAllocationVerificationSchema = createInsertSchema(batchA
 // Types for batch allocation verification
 export type BatchAllocationVerification = typeof batchAllocationVerifications.$inferSelect;
 export type InsertBatchAllocationVerification = z.infer<typeof insertBatchAllocationVerificationSchema>;
+
+// ==========================================
+// QA CHECKLIST TYPES
+// ==========================================
+
+export type QACheckItemStatus = "pass" | "fail" | "na";
+
+export type QACheckItem = {
+  id: string;
+  checkNumber: number;
+  title: string;
+  description: string;
+  status: QACheckItemStatus;
+  category: "discrepancies" | "missing" | "calculations" | "violations" | "integrity";
+  alertCategory: AlertCategory | null;
+  relatedAlertCount: number;
+  details: string | null;
+};
+
+export type QAChecklist = {
+  documentId: string;
+  evaluatedAt: string;
+  totalChecks: number;
+  passedChecks: number;
+  failedChecks: number;
+  naChecks: number;
+  items: QACheckItem[];
+};

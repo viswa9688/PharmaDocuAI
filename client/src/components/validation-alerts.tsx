@@ -34,6 +34,8 @@ import type {
 interface ValidationAlertsProps {
   documentId: string;
   onPageClick?: (pageNumber: number) => void;
+  activeTab?: string | null;
+  onTabChange?: (tab: string | null) => void;
 }
 
 const severityConfig: Record<AlertSeverity, { color: string; icon: typeof AlertCircle; label: string }> = {
@@ -104,7 +106,7 @@ function MissingPagesBanner({ alert }: { alert: ValidationAlert }) {
   );
 }
 
-export function ValidationAlerts({ documentId, onPageClick }: ValidationAlertsProps) {
+export function ValidationAlerts({ documentId, onPageClick, activeTab, onTabChange }: ValidationAlertsProps) {
   const { data, isLoading, error } = useQuery<{
     summary: DocumentValidationSummary;
     pageResults: PageValidationResult[];
@@ -214,7 +216,7 @@ export function ValidationAlerts({ documentId, onPageClick }: ValidationAlertsPr
             </p>
           </div>
         ) : (
-          <Tabs defaultValue="all" className="w-full">
+          <Tabs value={activeTab || "all"} onValueChange={(v) => onTabChange?.(v)} className="w-full">
             <TabsList className="grid w-full grid-cols-5">
               <TabsTrigger value="all" data-testid="tab-all-alerts">
                 All ({summary.totalAlerts})
@@ -226,7 +228,7 @@ export function ValidationAlerts({ documentId, onPageClick }: ValidationAlertsPr
                 Missing ({summary.alertsByCategory.missing_value})
               </TabsTrigger>
               <TabsTrigger value="violations" data-testid="tab-violation-alerts">
-                Violations ({summary.alertsByCategory.range_violation + summary.alertsByCategory.sop_violation})
+                Violations ({summary.alertsByCategory.range_violation + summary.alertsByCategory.sop_violation + summary.alertsByCategory.sequence_error})
               </TabsTrigger>
               <TabsTrigger value="integrity" data-testid="tab-integrity-alerts">
                 Integrity ({summary.alertsByCategory.data_integrity})
@@ -264,7 +266,7 @@ export function ValidationAlerts({ documentId, onPageClick }: ValidationAlertsPr
               <ScrollArea className="h-[400px]">
                 <AlertList 
                   alerts={filteredAlerts.filter(a => 
-                    a.category === 'range_violation' || a.category === 'sop_violation'
+                    a.category === 'range_violation' || a.category === 'sop_violation' || a.category === 'sequence_error'
                   )} 
                   onPageClick={onPageClick}
                 />

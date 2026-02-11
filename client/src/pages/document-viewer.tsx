@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useParams, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,7 @@ import { PageGrid } from "@/components/page-grid";
 import { PageDetailPanel } from "@/components/page-detail-panel";
 import { QualityAlert } from "@/components/quality-alert";
 import { ValidationAlerts } from "@/components/validation-alerts";
+import { QAChecklistCard } from "@/components/qa-checklist";
 import { ArrowLeft, Download } from "lucide-react";
 import type { Document, Page, QualityIssue, DocumentSummary } from "@shared/schema";
 
@@ -16,6 +17,8 @@ export default function DocumentViewer() {
   const documentId = params.id as string;
   const [selectedPage, setSelectedPage] = useState<Page | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [activeValidationTab, setActiveValidationTab] = useState<string | null>(null);
+  const validationRef = useRef<HTMLDivElement>(null);
 
   const { data: summary, isLoading } = useQuery<DocumentSummary>({
     queryKey: ["/api/documents", documentId, "summary"],
@@ -45,6 +48,13 @@ export default function DocumentViewer() {
     a.click();
     window.URL.revokeObjectURL(url);
     document.body.removeChild(a);
+  };
+
+  const handleQACategoryClick = (tabName: string, _alertCategory: string | null) => {
+    setActiveValidationTab(tabName);
+    if (validationRef.current) {
+      validationRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   };
 
   if (isLoading) {
@@ -97,16 +107,26 @@ export default function DocumentViewer() {
         avgConfidence={summary.avgConfidence}
       />
 
-      {/* Validation Alerts Section */}
-      <ValidationAlerts 
-        documentId={documentId}
-        onPageClick={(pageNumber) => {
-          const page = pages.find(p => p.pageNumber === pageNumber);
-          if (page) {
-            handlePageClick(page);
-          }
-        }}
-      />
+      {summary.document.status === "completed" && (
+        <QAChecklistCard
+          documentId={documentId}
+          onCategoryClick={handleQACategoryClick}
+        />
+      )}
+
+      <div ref={validationRef}>
+        <ValidationAlerts 
+          documentId={documentId}
+          onPageClick={(pageNumber) => {
+            const page = pages.find(p => p.pageNumber === pageNumber);
+            if (page) {
+              handlePageClick(page);
+            }
+          }}
+          activeTab={activeValidationTab}
+          onTabChange={setActiveValidationTab}
+        />
+      </div>
 
       {issues.length > 0 && (
         <div className="space-y-4">

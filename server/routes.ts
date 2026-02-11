@@ -14,6 +14,7 @@ import { bmrVerificationService } from "./services/bmr-verification";
 import { rawMaterialVerificationService } from "./services/raw-material-verification";
 import { batchAllocationVerificationService } from "./services/batch-allocation-verification";
 import { setupAuth, isAuthenticated } from "./replitAuth";
+import { evaluateQAChecklist, type QAChecklistInput } from "./services/qa-checklist";
 import type { ProcessingEventType } from "@shared/schema";
 
 // Use PostgreSQL database storage for persistence
@@ -605,6 +606,150 @@ export async function registerRoutes(app: Express): Promise<Server> {
         batchDateBounds,
       });
     } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get or compute QA checklist for a document
+  app.get("/api/documents/:id/qa-checklist", async (req, res) => {
+    try {
+      const doc = await storage.getDocument(req.params.id);
+      if (!doc) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+
+      // Return cached checklist if available
+      if (doc.qaChecklist) {
+        return res.json(doc.qaChecklist);
+      }
+
+      // Compute it on the fly
+      const pages = await storage.getPagesByDocument(req.params.id);
+      const pageResults = await Promise.all(
+        pages.map(async (page) => {
+          const result = await validationEngine.validatePage(
+            page.pageNumber,
+            page.metadata || {},
+            page.classification,
+            page.extractedText || ""
+          );
+          const metadata = page.metadata as Record<string, any> || {};
+          if (metadata.visualAnomalies && Array.isArray(metadata.visualAnomalies) && metadata.visualAnomalies.length > 0) {
+            const visualAlerts = validationEngine.createVisualAnomalyAlerts(metadata.visualAnomalies);
+            result.alerts.push(...visualAlerts);
+          }
+          // Run signature analysis
+          let signatureFields: any[] | null = null;
+          if (metadata.extraction) {
+            try {
+              const approvalAnalysis = signatureAnalyzer.analyze({
+                tables: metadata.extraction.tables,
+                handwrittenRegions: metadata.extraction.handwrittenRegions,
+                signatures: metadata.extraction.signatures,
+                formFields: metadata.extraction.formFields,
+                textBlocks: metadata.extraction.textBlocks || metadata.layoutAnalysis?.textBlocks,
+              });
+              signatureFields = approvalAnalysis.signatureFields;
+            } catch (err) {
+              signatureFields = metadata.approvals?.signatureFields || null;
+            }
+          } else {
+            signatureFields = metadata.approvals?.signatureFields || null;
+          }
+          if (signatureFields && Array.isArray(signatureFields)) {
+            for (const field of signatureFields) {
+              if (!field.isSigned) {
+                result.alerts.push({
+                  id: `sig-missing-${page.pageNumber}-${field.fieldLabel}`,
+                  category: "missing_value",
+                  severity: "high",
+                  title: "Missing Signature",
+                  message: `Signature field "${field.fieldLabel}" is empty on Page ${page.pageNumber}`,
+                  details: `Field: ${field.fieldLabel}`,
+                  source: {
+                    pageNumber: page.pageNumber,
+                    sectionType: page.classification || "unknown",
+                    fieldLabel: field.fieldLabel,
+                    boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+                    surroundingContext: "",
+                  },
+                  relatedValues: [],
+                  suggestedAction: "Obtain signature for this field",
+                  ruleId: "signature_required",
+                  formulaId: null,
+                  isResolved: false,
+                  resolvedBy: null,
+                  resolvedAt: null,
+                  resolution: null,
+                });
+              }
+            }
+          }
+          return result;
+        })
+      );
+
+      const batchDateBounds = validationEngine.extractBatchDateBounds(pageResults);
+      const batchDateAlerts = validationEngine.validateDatesAgainstBatchWindow(pageResults, batchDateBounds);
+      const extractionAlerts = validationEngine.generateBatchDateExtractionAlerts(batchDateBounds);
+      const summary = await validationEngine.validateDocument(req.params.id, pageResults);
+      summary.crossPageIssues = [...summary.crossPageIssues, ...batchDateAlerts, ...extractionAlerts];
+      summary.totalAlerts += batchDateAlerts.length + extractionAlerts.length;
+      for (const alert of [...batchDateAlerts, ...extractionAlerts]) {
+        summary.alertsBySeverity[alert.severity]++;
+        summary.alertsByCategory[alert.category]++;
+      }
+
+      const allAlerts = [
+        ...pageResults.flatMap(p => p.alerts),
+        ...summary.crossPageIssues,
+      ];
+
+      // Check for BMR verification
+      const bmrVerifications = await storage.getAllBMRVerifications();
+      const linkedBmr = bmrVerifications.find(v => v.documentId === req.params.id);
+      let bmrDiscrepancyCount = 0;
+      if (linkedBmr) {
+        const discs = await storage.getDiscrepanciesByVerification(linkedBmr.id);
+        bmrDiscrepancyCount = discs.length;
+      }
+
+      // Check for raw material verification
+      const rmVerifications = await storage.getAllRawMaterialVerifications();
+      const linkedRm = rmVerifications.find(v => v.documentId === req.params.id);
+
+      // Check for batch allocation verification
+      const baVerifications = await storage.getAllBatchAllocationVerifications();
+      const linkedBa = baVerifications.find(v => v.documentId === req.params.id);
+
+      const missingSignatureCount = allAlerts.filter(a => 
+        a.title.toLowerCase().includes("missing signature")
+      ).length;
+
+      const input: QAChecklistInput = {
+        documentId: req.params.id,
+        validationSummary: summary,
+        pageResults,
+        allAlerts,
+        hasBmrVerification: !!linkedBmr,
+        bmrDiscrepancyCount,
+        hasRawMaterialVerification: !!linkedRm,
+        rawMaterialOutOfLimits: linkedRm?.materialsOutOfLimits || 0,
+        hasBatchAllocation: !!linkedBa,
+        batchAllocationValid: linkedBa ? (linkedBa.status === "completed") : true,
+        totalPages: doc.totalPages || pages.length,
+        hasSignatures: allAlerts.some(a => a.ruleId === "signature_required"),
+        missingSignatureCount,
+      };
+
+      const checklist = evaluateQAChecklist(input);
+
+      // Cache it on the document
+      await storage.updateDocument(req.params.id, { qaChecklist: checklist });
+
+      res.json(checklist);
+    } catch (error: any) {
+      console.error("QA checklist error:", error);
       res.status(500).json({ error: error.message });
     }
   });

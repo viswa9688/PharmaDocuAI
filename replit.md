@@ -1,7 +1,7 @@
 # Batch Record Processing System
 
 ## Overview
-This AI-powered system processes scanned batch record PDFs, automates page classification, detects quality issues, and organizes documents. It integrates Google Document AI for advanced OCR and OpenAI for classification, aiming to streamline pharmaceutical batch record management by ensuring compliance and data integrity. The system offers a professional UI for document upload, viewing, and issue tracking, with a vision to enhance efficiency and accuracy in regulated environments.
+This AI-powered system automates the processing of scanned batch record PDFs, classifying pages, detecting quality issues, and organizing documents. It leverages Google Document AI for advanced OCR and OpenAI for classification. The primary goal is to enhance efficiency, accuracy, and compliance in pharmaceutical batch record management through a professional user interface for document upload, viewing, and issue tracking. The system aims to streamline operations in regulated environments.
 
 ## User Preferences
 I prefer detailed explanations.
@@ -14,138 +14,27 @@ Do not make changes to the file `Y`.
 The system is built on a React, Express, PostgreSQL, and TypeScript stack.
 
 ### UI/UX Decisions
-- **Frontend**: Utilizes Vite, TanStack Query, shadcn/ui, and Tailwind CSS for a modern and responsive user experience.
-- **Design**: Adheres to Material Design 3 guidelines, featuring a professional enterprise color palette, Inter font family, and meticulous attention to spacing and typography for clarity and usability.
-- **Key UI Components**:
-    - **Upload Page**: Supports drag-and-drop functionality for document ingestion.
-    - **Document List View**: Displays documents with status tracking.
-    - **Document Viewer**: Features a side-by-side view of original scans and extracted data, structured data display (tables, form fields, checkboxes, handwriting, signatures), page structure viewer, and an approval timeline.
-    - **Alerts**: Quality issue alerts and classification badges are prominently displayed.
+The frontend utilizes Vite, TanStack Query, shadcn/ui, and Tailwind CSS, adhering to Material Design 3 guidelines with a professional enterprise color palette and Inter font. Key UI components include a drag-and-drop upload page, a document list view with status tracking, and a document viewer offering side-by-side display of original scans and extracted data, structured data (tables, forms, checkboxes, handwriting, signatures), page structure, and an approval timeline. Quality issue alerts and classification badges are prominently displayed.
 
 ### Technical Implementations
-- **Core Processing**:
-    - **Google Document AI Form Parser**: Provides comprehensive OCR and document structure recognition.
-    - **High-Accuracy Extraction Module**: Extracts tables, form fields, checkboxes, handwritten text, and signatures with precise positional data.
-    - **Layout Analyzer**: Identifies page structures, groups elements spatially, and maps them to predefined fields, recognizing section types like `materials_log`, `equipment_log`, etc.
-    - **Signature Analyzer**: Simplified presence/absence signature detection system that checks if signature fields contain any handwritten content. Key features:
-      - **Table-based Detection**: Identifies signature columns by matching headers (Recorded By, Verified By, Sign & Date, IPQA S/D, etc.) and checks if cells have content
-      - **On-the-fly Analysis**: Runs signature analysis during validation API calls using latest detection logic
-      - **Abbreviation Table Exclusion**: Intelligently excludes abbreviation/glossary tables from signature detection by:
-        - Detecting abbreviation-related keywords (abbreviation, definition, meaning)
-        - Identifying merged abbreviation-definition patterns (e.g., "Ckd. By Checked By")
-        - Checking table content structure (short abbreviation + long definition pattern)
-        - Recognizing known abbreviation-definition pairs
-      - **Output**: Returns signatureFields array with isSigned boolean for each field - only empty fields generate "Missing Signature" alerts
-    - **Validation Engine**: A comprehensive system for pharmaceutical batch record compliance, including value extraction, formula detection with a library of calculations, SOP rules engine (JSON-configurable for thresholds, hold times, pH ranges), cross-page validation for consistency, and human-readable alerts.
-    - **OpenAI-powered Classification**: Used for page classification, with a rule-based fallback mechanism.
-    - **PDF Processing**: Extracts pages and generates high-resolution PNG images (scale: 2) for viewing.
-    - **Secure Image Serving**: Implements hardened path validation to prevent directory traversal vulnerabilities.
-    - **Raw Text Scanning**: Enhanced detection of batch/lot numbers from raw OCR text, handling typos, multi-line layouts, and generating alerts for missing values.
-    - **Parallel Extraction with Reconciliation**: For batch/lot number validation, runs BOTH structured form field extraction AND raw text scanning in parallel. If both agree, high confidence. If they disagree, generates "Data Quality" reconciliation alert for human review. Results include sourceType ("structured" or "text-derived") and confidence level ("high", "medium", "low").
-    - **Batch Date Bounds Extraction**: Extracts "Date & Time of Batch Commencement" and "Date & Time of Batch Completion" from the batch details page (typically page 2) using parallel extraction (structured + raw text) with reconciliation. These dates define the authoritative manufacturing window for the entire batch.
-    - **Temporal Validation**: Dates extracted from pages 3+ are validated against the batch commencement/completion window. Pages 1-2 are excluded (page 1 contains document metadata that naturally predates manufacturing, page 2 contains the batch details section itself). Additionally, document metadata fields like "Effective Date", "Issue Date", "Revision Date", etc. are excluded on ALL pages since these naturally predate manufacturing. Alerts are generated for dates that fall outside this window with "sequence_error" category.
-    - **Confidence Scoring for Batch Dates**: 
-      - "high": Both sources (structured + text) found AND agree for BOTH commencement and completion
-      - "medium": Only one source available, OR sources disagree
-      - "low": No dates found at all
-    - **Visual Analyzer (Data Integrity Detection)**: Computer vision-based detection of strike-offs, red ink corrections, overwrites, erasures, and other visual anomalies that impact GMP compliance. Uses sharp and canvas libraries for:
-      - **Line Detection**: Identifies horizontal/diagonal strike-through lines crossing text regions
-      - **Color Masking**: Detects red ink marks and annotations using HSV color space analysis
-      - **Erasure Detection**: Identifies whitened areas or signs of correction fluid
-      - **Text Region Intersection**: Maps visual anomalies to affected text by intersecting with OCR bounding boxes
-      - **Thumbnail Generation**: Creates cropped thumbnails of detected anomalies for visual review
-      - Anomalies are stored in page metadata and converted to "data_integrity" category ValidationAlerts
-    - **Metadata Storage**: Rich extraction and layout data are stored in PostgreSQL using JSONB fields. Batch date bounds are stored at document level.
+The core processing involves Google Document AI for OCR and structure recognition, a high-accuracy extraction module for various data types, and a layout analyzer to identify page structures. A simplified signature analyzer detects signature presence in table fields, intelligently excluding abbreviation tables. The validation engine enforces pharmaceutical batch record compliance through value extraction, formula detection, a JSON-configurable SOP rules engine, and cross-page consistency checks. OpenAI-powered classification (with rule-based fallback) categorizes pages. PDF processing extracts pages and generates high-resolution PNGs for viewing, with secure image serving. Enhanced raw text scanning and parallel extraction with reconciliation are used for batch/lot number and batch date bounds detection, generating alerts for discrepancies or missing values. Temporal validation checks dates against batch commencement/completion, excluding specific document types. A visual analyzer uses computer vision to detect GMP compliance issues like strike-offs, red ink corrections, overwrites, and erasures, generating cropped thumbnails of anomalies. All rich extraction and layout data, including batch date bounds, are stored in PostgreSQL using JSONB fields.
 
 ### System Design Choices
-- **Backend**: Implemented with Express, integrating Drizzle ORM for database interactions.
-- **Database**: PostgreSQL is used for all persistent storage of document processing history, including document metadata, page data, and quality issues.
-- **Modularity**: Services are clearly separated (Document AI, classifier, PDF processor, layout analyzer, signature analyzer) for maintainability and scalability.
-- **Error Handling**: Comprehensive error handling and graceful fallbacks are integrated throughout the pipeline, particularly for compliance validation.
+The backend uses Express with Drizzle ORM. PostgreSQL serves as the primary database for all persistent storage. The architecture promotes modularity with separated services (Document AI, classifier, PDF processor, layout analyzer, signature analyzer) and incorporates comprehensive error handling.
 
-### BMR Verification Feature
-- **Purpose**: Validates Batch Manufacturing Records against Master Product Cards to identify discrepancies
-- **Workflow**: Upload single PDF containing both MPC and BMR → System identifies documents → Extracts fields → Compares values → Flags mismatches
-- **Document Identification**: Uses keyword detection to classify pages as MPC or BMR
-- **Field Extraction**: Multi-pattern regex approach with fallback to tabular label matching for robustness
-- **Comparison Logic**: Normalizes values (case, whitespace) and compares canonical fields
-- **Discrepancy Severity**: Critical (product name/code), Major (batch size, ingredients), Minor (descriptions, locations)
-- **Visual Error Highlighting**: Bounding box overlays on page images showing exact error locations
-  - Uses Document AI form field extraction to capture field coordinates
-  - Red highlighting for critical/high/major severity, orange for medium, yellow for low/minor/info
-  - MPC and BMR bounding boxes rendered separately with labeled tooltips
-  - PageImageOverlay component handles overlay rendering with severity-based colors
-- **Storage**: `bmrVerifications` table for sessions, `bmrDiscrepancies` table with mpcBoundingBox and bmrBoundingBox JSONB fields
-
-### Batch Allocation Verification Feature
-- **Purpose**: Validates Manufacturing/Expiry dates and shelf life calculations from Batch Allocation Log documents
-- **Workflow**: Upload PDF → Extract dates, batch number, BMR/MPC numbers → Calculate shelf life → Verify compliance status
-- **Key Extractions**:
-  - Batch Number, MPC Number, BMR Number
-  - Manufacturing Date (Mfg Date)
-  - Expiry Date (Exp Date)
-  - QA Officer and Verification Date
-  - Compliance status from document checkboxes/text
-- **Shelf Life Calculation**: Automatically calculates shelf life in months from Mfg Date to Exp Date
-- **Validation**: Flags whether dates match and calculated shelf life is valid (positive months)
-- **Storage**: `batchAllocationVerifications` table with all extracted fields and JSONB for additional data
-
-### Dashboard Feature
-- **Purpose**: Provides a comprehensive compliance overview with validation statistics and document metrics
-- **Key Components**:
-  - **Overall Status Card**: Shows compliant/review required/non-compliant status with pass rate and total alerts
-  - **Category Cards**: Six validation categories (Signatures, Data Integrity, Calculations, Date Sequence, Batch Numbers, Page Completeness)
-  - **Document Summary**: Total documents, approved count, and documents with issues
-- **API Endpoint**: `/api/dashboard/summary` computes validation statistics on-demand
-- **Auto-Refresh**: Dashboard refreshes every 30 seconds
-
-### Audit Trail Feature
-- **Purpose**: Complete history of document processing events for compliance tracking
-- **Event Types Tracked**:
-  - document_upload, document_delete, document_viewed
-  - document_ai_extraction, page_classification, validation
-  - processing_complete, processing_failed
-  - document_approved, document_unapproved
-  - issue_approved, issue_rejected
-- **Filtering**: By status (success/failed/pending) and event type
-- **Storage**: `processingEvents` table with user tracking, timestamps, and metadata (JSONB)
-- **API Endpoint**: `/api/events/recent` returns events with user information
-
-### Document Approval Workflow (Unified)
-- **Purpose**: Unified approval/disapproval functionality for all document types with user tracking
-- **Unified Workflow**: All verification types (BMR, Raw Material, Batch Allocation) create document records that flow into the Approvals page
-- **Document Types**: 
-  - `batch_record` (gray badge) - Default batch records
-  - `raw_material` (purple badge with beaker icon) - Raw Material Verification uploads
-  - `batch_allocation` (blue badge with calendar icon) - Batch Allocation Verification uploads  
-  - `bmr_verification` (orange badge) - BMR Verification uploads
-- **Key Features**:
-  - Pending/Approved tabs for workflow management
-  - Type column with color-coded badges and icons
-  - Approve and Revoke actions with confirmation
-  - Approver tracking (who approved and when)
-  - Integration with audit trail for compliance
-- **Data Linking**: 
-  - `documents` table has `documentType` field for categorization
-  - `rawMaterialVerifications` and `batchAllocationVerifications` tables have `documentId` foreign key
-  - All uploads log `document_upload`, `processing_complete`, `processing_failed` events
-- **Storage**: Documents have `isApproved`, `approvedBy`, `approvedAt`, `documentType` fields
-- **API Endpoint**: `PATCH /api/documents/:id/approve` updates approval status and logs events
-
-### Issue Resolution Feature
-- **Purpose**: Track and resolve validation issues with approve/reject workflow
-- **Storage**: `issueResolutions` table tracks documentId, alertId, status, comment, resolved timestamp
-- **API Endpoint**: `POST /api/issues/resolve` with status (approved/rejected) and optional comment
-
-### User Management
-- **Authentication**: Integrated with Replit Auth (OIDC) for user authentication
-- **User Storage**: `users` table with id, email, firstName, lastName, profileImageUrl
-- **Test Login**: Support for test credentials when not on Replit domain
+### Features
+- **BMR Verification**: Validates Batch Manufacturing Records against Master Product Cards by extracting and comparing fields, flagging discrepancies (Critical, Major, Minor), and providing visual error highlighting with bounding box overlays.
+- **Batch Allocation Verification**: Extracts manufacturing/expiry dates and batch details from Batch Allocation Log documents, calculates shelf life, and verifies compliance status.
+- **Dashboard**: Provides a comprehensive compliance overview with validation statistics, document metrics, and categorized alert breakdowns, with an auto-refreshing UI.
+- **Audit Trail**: Tracks a complete history of document processing events, including user actions, timestamps, and metadata, for compliance.
+- **Document Approval Workflow (Unified)**: Offers unified approval/disapproval functionality for various document types (batch_record, raw_material, batch_allocation, bmr_verification) with user tracking and integration with the audit trail.
+- **QA Review Checklist**: Maps 11 pharmaceutical QA checkpoints against automated validation results, providing pass/fail/N/A status for each, with click-through navigation to relevant validation tabs.
+- **Issue Resolution**: Tracks and resolves validation issues with an approve/reject workflow, including comments and resolution timestamps.
+- **User Management**: Integrates with Replit Auth (OIDC) for user authentication and stores user profiles in a `users` table.
 
 ## External Dependencies
 - **Google Cloud Platform**:
     - **Google Document AI**: For advanced document parsing and data extraction.
-    - Google Cloud Project ID and Location are required.
 - **OpenAI**: For AI-powered page classification.
-- **PostgreSQL**: Primary database for all application data and historical records.
-- **pdf-to-img**: Library used for converting PDF pages to images.
+- **PostgreSQL**: Primary database.
+- **pdf-to-img**: Library for converting PDF pages to images.
