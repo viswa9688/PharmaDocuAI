@@ -26,7 +26,8 @@ import {
   Eye,
   ChevronDown,
   Loader2,
-  User
+  User,
+  Download
 } from "lucide-react";
 import type { QAChecklist, QACheckItem, ValidationAlert, AlertReview } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -394,6 +395,9 @@ export function QAChecklistCard({ documentId, onCategoryClick, onViewPage }: QAC
     };
   }, [checklist, reviewsByAlertId]);
 
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const { toast: headerToast } = useToast();
+
   if (isLoading) {
     return (
       <Card>
@@ -422,6 +426,35 @@ export function QAChecklistCard({ documentId, onCategoryClick, onViewPage }: QAC
 
   const overallStatus = adjustedCounts.failedChecks === 0 ? "compliant" : "review_required";
 
+  const handleDownloadPdf = async () => {
+    setDownloadingPdf(true);
+    try {
+      const response = await fetch(`/api/documents/${documentId}/qa-checklist/pdf`);
+      if (!response.ok) {
+        throw new Error("Failed to generate PDF");
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const disposition = response.headers.get("Content-Disposition");
+      const filenameMatch = disposition?.match(/filename="?([^"]+)"?/);
+      a.download = filenameMatch?.[1] || `QA_Checklist_${documentId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch {
+      headerToast({
+        title: "Download Failed",
+        description: "Could not generate the PDF report. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
+
   return (
     <Card data-testid="card-qa-checklist">
       <CardHeader>
@@ -440,6 +473,20 @@ export function QAChecklistCard({ documentId, onCategoryClick, onViewPage }: QAC
             <span className="text-sm text-muted-foreground" data-testid="text-qa-score">
               {adjustedCounts.passedChecks}/{adjustedCounts.totalChecks} passed ({passRate}%)
             </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDownloadPdf}
+              disabled={downloadingPdf}
+              data-testid="button-download-qa-pdf"
+            >
+              {downloadingPdf ? (
+                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4 mr-1" />
+              )}
+              {downloadingPdf ? "Generating..." : "Download PDF"}
+            </Button>
           </div>
         </div>
       </CardHeader>

@@ -15,6 +15,7 @@ import { rawMaterialVerificationService } from "./services/raw-material-verifica
 import { batchAllocationVerificationService } from "./services/batch-allocation-verification";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { evaluateQAChecklist, type QAChecklistInput } from "./services/qa-checklist";
+import { generateQAChecklistPDF } from "./services/qa-checklist-pdf";
 import {
   convertBMRDiscrepanciesToAlerts,
   convertRawMaterialResultsToAlerts,
@@ -950,6 +951,215 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(checklist);
     } catch (error: any) {
       console.error("QA checklist error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/documents/:id/qa-checklist/pdf", async (req, res) => {
+    try {
+      const id = req.params.id;
+      const doc = await storage.getDocument(id);
+      if (!doc) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+
+      let checklist = doc.qaChecklist;
+
+      if (!checklist) {
+        const pages = await storage.getPagesByDocument(id);
+        const pageResults = await Promise.all(
+          pages.map(async (page) => {
+            const result = await validationEngine.validatePage(
+              page.pageNumber,
+              page.metadata || {},
+              page.classification,
+              page.extractedText || ""
+            );
+            const metadata = page.metadata as Record<string, any> || {};
+            if (metadata.visualAnomalies && Array.isArray(metadata.visualAnomalies) && metadata.visualAnomalies.length > 0) {
+              const visualAlerts = validationEngine.createVisualAnomalyAlerts(metadata.visualAnomalies);
+              result.alerts.push(...visualAlerts);
+            }
+            let signatureFields: any[] | null = null;
+            if (metadata.extraction) {
+              try {
+                const approvalAnalysis = signatureAnalyzer.analyze({
+                  tables: metadata.extraction.tables,
+                  handwrittenRegions: metadata.extraction.handwrittenRegions,
+                  signatures: metadata.extraction.signatures,
+                  formFields: metadata.extraction.formFields,
+                  textBlocks: metadata.extraction.textBlocks || metadata.layoutAnalysis?.textBlocks,
+                });
+                signatureFields = approvalAnalysis.signatureFields;
+              } catch (err) {
+                signatureFields = metadata.approvals?.signatureFields || null;
+              }
+            } else {
+              signatureFields = metadata.approvals?.signatureFields || null;
+            }
+            if (signatureFields && Array.isArray(signatureFields)) {
+              for (const field of signatureFields) {
+                if (!field.isSigned) {
+                  result.alerts.push({
+                    id: `sig-missing-${page.pageNumber}-${field.fieldLabel}`,
+                    category: "missing_value",
+                    severity: "high",
+                    title: "Missing Signature",
+                    message: `Signature field "${field.fieldLabel}" is empty on Page ${page.pageNumber}`,
+                    details: `Field: ${field.fieldLabel}`,
+                    source: {
+                      pageNumber: page.pageNumber,
+                      sectionType: page.classification || "unknown",
+                      fieldLabel: field.fieldLabel,
+                      boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+                      surroundingContext: "",
+                    },
+                    relatedValues: [],
+                    suggestedAction: "Obtain signature for this field",
+                    ruleId: "signature_required",
+                    formulaId: null,
+                    isResolved: false,
+                    resolvedBy: null,
+                    resolvedAt: null,
+                    resolution: null,
+                  });
+                }
+              }
+            }
+            return result;
+          })
+        );
+
+        const batchDateBounds = validationEngine.extractBatchDateBounds(pageResults);
+        const batchDateAlerts = validationEngine.validateDatesAgainstBatchWindow(pageResults, batchDateBounds);
+        const extractionAlerts = validationEngine.generateBatchDateExtractionAlerts(batchDateBounds);
+        const summary = await validationEngine.validateDocument(id, pageResults);
+        summary.crossPageIssues = [...summary.crossPageIssues, ...batchDateAlerts, ...extractionAlerts];
+        summary.totalAlerts += batchDateAlerts.length + extractionAlerts.length;
+        for (const alert of [...batchDateAlerts, ...extractionAlerts]) {
+          summary.alertsBySeverity[alert.severity]++;
+          summary.alertsByCategory[alert.category]++;
+        }
+
+        const storedVerificationAlerts = (doc.verificationAlerts as ValidationAlert[]) || [];
+        if (storedVerificationAlerts.length > 0) {
+          summary.crossPageIssues = [...summary.crossPageIssues, ...storedVerificationAlerts];
+          summary.totalAlerts += storedVerificationAlerts.length;
+          for (const alert of storedVerificationAlerts) {
+            const sev = alert.severity as AlertSeverity;
+            const cat = alert.category as AlertCategory;
+            if (sev && summary.alertsBySeverity[sev] !== undefined) {
+              summary.alertsBySeverity[sev]++;
+            }
+            if (cat && summary.alertsByCategory[cat] !== undefined) {
+              summary.alertsByCategory[cat]++;
+            }
+          }
+        }
+
+        const allAlerts = [
+          ...pageResults.flatMap(p => p.alerts),
+          ...summary.crossPageIssues,
+        ];
+
+        const bmrVerificationAlerts = storedVerificationAlerts.filter(a => a.ruleId === "bmr_verification");
+        let bmrDiscrepancyCount = bmrVerificationAlerts.filter(a => a.severity !== "info").length;
+        let hasBmrVerification = bmrDiscrepancyCount > 0 || bmrVerificationAlerts.length > 0;
+
+        if (!hasBmrVerification) {
+          const bmrVerifs = await storage.getAllBMRVerifications();
+          const linkedBmr = bmrVerifs.find(v => v.documentId === id);
+          if (linkedBmr) {
+            hasBmrVerification = true;
+            const discs = await storage.getDiscrepanciesByVerification(linkedBmr.id);
+            bmrDiscrepancyCount = discs.length;
+          }
+        }
+
+        const rawMatAlerts = storedVerificationAlerts.filter(a => a.ruleId === "raw_material_verification");
+        let hasRawMaterialVerification = rawMatAlerts.length > 0;
+        let rawMaterialOutOfLimits = rawMatAlerts.filter(a => a.category === "range_violation" && a.severity !== "info").length;
+
+        if (!hasRawMaterialVerification) {
+          const rmVerifications = await storage.getAllRawMaterialVerifications();
+          const linkedRm = rmVerifications.find(v => v.documentId === id);
+          if (linkedRm) {
+            hasRawMaterialVerification = true;
+            rawMaterialOutOfLimits = linkedRm.materialsOutOfLimits || 0;
+          }
+        }
+
+        const batchAllocAlerts = storedVerificationAlerts.filter(a => a.ruleId === "batch_allocation_verification");
+        let hasBatchAllocation = batchAllocAlerts.length > 0;
+        let batchAllocationValid = batchAllocAlerts.filter(a => a.severity !== "info").length === 0;
+
+        if (!hasBatchAllocation) {
+          const baVerifications = await storage.getAllBatchAllocationVerifications();
+          const linkedBa = baVerifications.find(v => v.documentId === id);
+          if (linkedBa) {
+            hasBatchAllocation = true;
+            batchAllocationValid = linkedBa.status === "completed";
+          }
+        }
+
+        const missingSignatureCount = allAlerts.filter(a =>
+          a.title.toLowerCase().includes("missing signature")
+        ).length;
+
+        const userDeclaredAlerts = allAlerts.filter(a => a.ruleId === "user_declared_verification");
+        const hasUserDeclaredFields = !!(doc.userDeclaredFields);
+        const userDeclaredMismatchCount = userDeclaredAlerts.length;
+
+        const input: QAChecklistInput = {
+          documentId: id,
+          validationSummary: summary,
+          pageResults,
+          allAlerts,
+          hasBmrVerification,
+          bmrDiscrepancyCount,
+          hasRawMaterialVerification,
+          rawMaterialOutOfLimits,
+          hasBatchAllocation,
+          batchAllocationValid,
+          totalPages: doc.totalPages || pages.length,
+          hasSignatures: allAlerts.some(a => a.ruleId === "signature_required"),
+          missingSignatureCount,
+          hasUserDeclaredFields,
+          userDeclaredMismatchCount,
+        };
+
+        checklist = evaluateQAChecklist(input);
+      }
+
+      const reviews = await storage.getAlertReviewsByDocument(id);
+      const reviewsWithUsers = await Promise.all(
+        reviews.map(async (review) => {
+          const user = await storage.getUser(review.reviewerId);
+          return {
+            ...review,
+            reviewer: user ? {
+              id: user.id,
+              firstName: user.firstName,
+              lastName: user.lastName,
+              email: user.email,
+            } : null,
+          };
+        })
+      );
+
+      const pdfBuffer = await generateQAChecklistPDF(checklist, reviewsWithUsers as any, doc.filename);
+
+      const safeFilename = doc.filename.replace(/[^a-zA-Z0-9_.-]/g, "_");
+      const dateStr = new Date().toISOString().split("T")[0];
+
+      res.set({
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="QA_Checklist_${safeFilename}_${dateStr}.pdf"`,
+        "Content-Length": pdfBuffer.length.toString(),
+      });
+      res.send(pdfBuffer);
+    } catch (error: any) {
+      console.error("QA checklist PDF error:", error);
       res.status(500).json({ error: error.message });
     }
   });
