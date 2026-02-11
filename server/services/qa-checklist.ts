@@ -22,6 +22,8 @@ export interface QAChecklistInput {
   totalPages: number;
   hasSignatures: boolean;
   missingSignatureCount: number;
+  hasUserDeclaredFields: boolean;
+  userDeclaredMismatchCount: number;
 }
 
 const QA_CHECK_DEFINITIONS = [
@@ -233,6 +235,29 @@ const QA_CHECK_DEFINITIONS = [
         return { status: "fail", count: integrityAlerts.length, details: `${integrityAlerts.length} data integrity issues detected` };
       }
       return { status: "pass", count: 0, details: "No data integrity issues observed" };
+    }
+  },
+  {
+    id: "qa_25",
+    checkNumber: 12,
+    title: "User-declared batch details verified",
+    description: "Product Name, Start/End Date, Batch No., Manufacturing Date, and Expiry Date match user-declared values entered at upload.",
+    category: "discrepancies" as const,
+    alertCategory: "consistency_error" as AlertCategory | null,
+    evaluate: (input: QAChecklistInput): { status: QACheckItemStatus; count: number; details: string | null } => {
+      if (!input.hasUserDeclaredFields) {
+        return { status: "na", count: 0, details: "No user-declared batch details were provided at upload" };
+      }
+      const userDeclaredAlerts = input.allAlerts.filter(a => 
+        a.ruleId === "user_declared_verification"
+      );
+      if (userDeclaredAlerts.length > 0) {
+        return { status: "fail", count: userDeclaredAlerts.length, details: `${userDeclaredAlerts.length} field(s) do not match user-declared values` };
+      }
+      if (input.userDeclaredMismatchCount > 0) {
+        return { status: "fail", count: input.userDeclaredMismatchCount, details: `${input.userDeclaredMismatchCount} field(s) do not match` };
+      }
+      return { status: "pass", count: 0, details: "All user-declared batch details match the document" };
     }
   },
 ];

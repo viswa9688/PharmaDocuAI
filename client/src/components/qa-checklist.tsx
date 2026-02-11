@@ -156,7 +156,15 @@ function QACheckRow({
       className={`flex items-start gap-3 p-3 rounded-md transition-colors ${
         canClick ? "cursor-pointer hover-elevate" : ""
       } ${item.status === "fail" ? "bg-red-50/50 dark:bg-red-950/30" : ""}`}
-      onClick={() => canClick && onCategoryClick(categoryTabMap[item.category], item.alertCategory)}
+      onClick={() => {
+        if (canClick) {
+          if (item.id === "qa_25") {
+            onCategoryClick("all", "user_declared_verification");
+          } else {
+            onCategoryClick(categoryTabMap[item.category], item.alertCategory);
+          }
+        }
+      }}
       data-testid={`qa-check-item-${item.id}`}
     >
       <StatusIcon status={item.status} />

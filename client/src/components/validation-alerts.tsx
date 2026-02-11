@@ -36,6 +36,7 @@ interface ValidationAlertsProps {
   onPageClick?: (pageNumber: number) => void;
   activeTab?: string | null;
   onTabChange?: (tab: string | null) => void;
+  ruleIdFilter?: string | null;
 }
 
 const severityConfig: Record<AlertSeverity, { color: string; icon: typeof AlertCircle; label: string }> = {
@@ -106,7 +107,7 @@ function MissingPagesBanner({ alert }: { alert: ValidationAlert }) {
   );
 }
 
-export function ValidationAlerts({ documentId, onPageClick, activeTab, onTabChange }: ValidationAlertsProps) {
+export function ValidationAlerts({ documentId, onPageClick, activeTab, onTabChange, ruleIdFilter }: ValidationAlertsProps) {
   const { data, isLoading, error } = useQuery<{
     summary: DocumentValidationSummary;
     pageResults: PageValidationResult[];
@@ -158,7 +159,11 @@ export function ValidationAlerts({ documentId, onPageClick, activeTab, onTabChan
   // Extract missing pages alert for prominent display using stable ruleId
   const missingPagesAlert = allAlerts.find(a => a.ruleId === "page_completeness_missing");
   // Filter out the missing pages alert from regular display (it will be shown in banner)
-  const filteredAlerts = allAlerts.filter(a => a.ruleId !== "page_completeness_missing");
+  let filteredAlerts = allAlerts.filter(a => a.ruleId !== "page_completeness_missing");
+  // Apply ruleId filter if set (e.g., from QA checklist Point 12 click-through)
+  if (ruleIdFilter) {
+    filteredAlerts = filteredAlerts.filter(a => a.ruleId === ruleIdFilter);
+  }
 
   return (
     <Card>

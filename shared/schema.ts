@@ -70,6 +70,16 @@ export type BatchDateBounds = {
   sourcePageNumber: number | null;       // Page number where batch details were found
 };
 
+// User-declared batch fields entered at upload time for verification
+export type UserDeclaredFields = {
+  productName: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  batchNo: string | null;
+  manufacturingDate: string | null;
+  expiryDate: string | null;
+};
+
 // Document table - stores uploaded batch record PDFs
 export const documents = pgTable("documents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -89,6 +99,8 @@ export const documents = pgTable("documents", {
   qaChecklist: jsonb("qa_checklist").$type<QAChecklist>(),
   // Verification alerts from BMR/Raw Material/Batch Allocation auto-verification
   verificationAlerts: jsonb("verification_alerts").$type<ValidationAlert[]>(),
+  // User-declared batch fields for verification against extracted data
+  userDeclaredFields: jsonb("user_declared_fields").$type<UserDeclaredFields>(),
   // Approval status for batch records
   isApproved: boolean("is_approved").default(false).notNull(),
   approvedBy: varchar("approved_by").references(() => users.id, { onDelete: "set null" }),

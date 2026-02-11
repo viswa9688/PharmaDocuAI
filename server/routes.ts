@@ -20,7 +20,8 @@ import {
   convertRawMaterialResultsToAlerts,
   convertBatchAllocationToAlerts,
 } from "./services/verification-alerts-converter";
-import type { ProcessingEventType, ValidationAlert, AlertSeverity, AlertCategory } from "@shared/schema";
+import type { ProcessingEventType, ValidationAlert, AlertSeverity, AlertCategory, UserDeclaredFields } from "@shared/schema";
+import { extractBatchFieldsFromPages, compareUserDeclaredFields } from "./services/user-declared-verification";
 
 // Use PostgreSQL database storage for persistence
 const storage = new DBStorage();
@@ -271,11 +272,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Only PDF files are supported" });
       }
 
+      // Parse user-declared fields if provided
+      let userDeclaredFields = null;
+      if (req.body.userDeclaredFields) {
+        try {
+          userDeclaredFields = typeof req.body.userDeclaredFields === "string"
+            ? JSON.parse(req.body.userDeclaredFields)
+            : req.body.userDeclaredFields;
+        } catch (e) {
+          console.warn("Failed to parse userDeclaredFields:", e);
+        }
+      }
+
       // Create document record
       const doc = await storage.createDocument({
         filename: req.file.originalname,
         fileSize: req.file.size,
         status: "pending",
+        ...(userDeclaredFields ? { userDeclaredFields } : {}),
       });
 
       // Log upload event
@@ -794,6 +808,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         a.title.toLowerCase().includes("missing signature")
       ).length;
 
+      const userDeclaredAlerts = allAlerts.filter(a => a.ruleId === "user_declared_verification");
+      const hasUserDeclaredFields = !!(doc.userDeclaredFields);
+      const userDeclaredMismatchCount = userDeclaredAlerts.length;
+
       const input: QAChecklistInput = {
         documentId: req.params.id,
         validationSummary: summary,
@@ -808,6 +826,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalPages: doc.totalPages || pages.length,
         hasSignatures: allAlerts.some(a => a.ruleId === "signature_required"),
         missingSignatureCount,
+        hasUserDeclaredFields,
+        userDeclaredMismatchCount,
       };
 
       const checklist = evaluateQAChecklist(input);
@@ -1544,6 +1564,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         } catch (batchAllocError: any) {
           console.warn("[AUTO-VERIFY] Batch allocation verification failed:", batchAllocError.message);
+        }
+
+        // Step 4: User-declared fields verification
+        try {
+          const currentDoc = await storage.getDocument(documentId);
+          const userFields = currentDoc?.userDeclaredFields as UserDeclaredFields | null;
+          if (userFields) {
+            console.log(`[AUTO-VERIFY] User-Declared Fields: Running comparison...`);
+            const extracted = extractBatchFieldsFromPages(pagesWithData);
+            console.log(`[AUTO-VERIFY] Extracted fields: Product="${extracted.productName}", Batch="${extracted.batchNo}", MfgDate="${extracted.manufacturingDate}", ExpDate="${extracted.expiryDate}"`);
+            const userDeclaredAlerts = compareUserDeclaredFields(userFields, extracted);
+            verificationAlerts.push(...userDeclaredAlerts);
+            console.log(`[AUTO-VERIFY] User-Declared Fields: ${userDeclaredAlerts.length} alerts generated`);
+          } else {
+            console.log(`[AUTO-VERIFY] User-Declared Fields: No user-declared fields provided, skipping`);
+          }
+        } catch (userDeclaredError: any) {
+          console.warn("[AUTO-VERIFY] User-declared fields verification failed:", userDeclaredError.message);
         }
 
         // Store verification alerts in the document (and clear cached QA checklist for re-evaluation)

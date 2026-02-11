@@ -28,7 +28,8 @@ The backend uses Express with Drizzle ORM. PostgreSQL serves as the primary data
 - **Dashboard**: Provides a comprehensive compliance overview with validation statistics, document metrics, and categorized alert breakdowns, with an auto-refreshing UI.
 - **Audit Trail**: Tracks a complete history of document processing events, including user actions, timestamps, and metadata, for compliance.
 - **Document Approval Workflow (Unified)**: Offers unified approval/disapproval functionality for various document types (batch_record, raw_material, batch_allocation, bmr_verification) with user tracking and integration with the audit trail.
-- **QA Review Checklist**: Maps 11 pharmaceutical QA checkpoints against automated validation results, providing pass/fail/N/A status for each, with click-through navigation to relevant validation tabs.
+- **QA Review Checklist**: Maps 12 pharmaceutical QA checkpoints against automated validation results, providing pass/fail/N/A status for each, with click-through navigation to relevant validation tabs. Point 12 verifies user-declared batch details against extracted data.
+- **User-Declared Batch Details Verification**: A modal prompt at upload time collects Product Name, Start Date, End Date, Batch No., Manufacturing Date, and Expiry Date. These are compared against extracted BMR data after processing, generating consistency alerts for mismatches. Results feed into QA checklist Point 12 with dedicated click-through filtering.
 - **Issue Resolution**: Tracks and resolves validation issues with an approve/reject workflow, including comments and resolution timestamps.
 - **User Management**: Integrates with Replit Auth (OIDC) for user authentication and stores user profiles in a `users` table.
 

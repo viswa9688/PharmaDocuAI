@@ -3,10 +3,10 @@ import { useLocation } from "wouter";
 import { UploadZone } from "@/components/upload-zone";
 import { ProcessingStatus } from "@/components/processing-status";
 import { DocumentStats } from "@/components/document-stats";
+import { BatchDetailsModal } from "@/components/batch-details-modal";
 import { useToast } from "@/hooks/use-toast";
-import type { ProcessingStatus as ProcessingStatusType, Document } from "@shared/schema";
+import type { ProcessingStatus as ProcessingStatusType, Document, UserDeclaredFields } from "@shared/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,11 +26,16 @@ export default function Upload() {
   const [currentProcessing, setCurrentProcessing] = useState<ProcessingStatusType | null>(null);
   const [showSuccessDialog, setShowSuccessDialog] = useState(false);
   const [completedDocId, setCompletedDocId] = useState<string | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [showBatchModal, setShowBatchModal] = useState(false);
 
   const uploadMutation = useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async ({ file, userDeclaredFields }: { file: File; userDeclaredFields?: UserDeclaredFields | null }) => {
       const formData = new FormData();
       formData.append("file", file);
+      if (userDeclaredFields) {
+        formData.append("userDeclaredFields", JSON.stringify(userDeclaredFields));
+      }
       
       const response = await fetch("/api/documents/upload", {
         method: "POST",
@@ -68,14 +73,12 @@ export default function Upload() {
     },
   });
 
-  // Poll for document status updates
   const { data: documentData } = useQuery<Document>({
     queryKey: ["/api/documents", currentProcessing?.documentId],
     enabled: !!currentProcessing?.documentId && currentProcessing?.status === "processing",
-    refetchInterval: 2000, // Poll every 2 seconds
+    refetchInterval: 2000,
   });
 
-  // Watch for completion
   useEffect(() => {
     if (!documentData || !currentProcessing) return;
 
@@ -119,7 +122,29 @@ export default function Upload() {
   }, [documentData, currentProcessing?.status, currentProcessing?.currentPage, currentProcessing?.totalPages, toast]);
 
   const handleUpload = async (file: File) => {
-    await uploadMutation.mutateAsync(file);
+    setPendingFile(file);
+    setShowBatchModal(true);
+  };
+
+  const handleBatchDetailsSubmit = async (fields: UserDeclaredFields) => {
+    setShowBatchModal(false);
+    if (pendingFile) {
+      await uploadMutation.mutateAsync({ file: pendingFile, userDeclaredFields: fields });
+      setPendingFile(null);
+    }
+  };
+
+  const handleBatchDetailsSkip = async () => {
+    setShowBatchModal(false);
+    if (pendingFile) {
+      await uploadMutation.mutateAsync({ file: pendingFile });
+      setPendingFile(null);
+    }
+  };
+
+  const handleBatchModalClose = () => {
+    setShowBatchModal(false);
+    setPendingFile(null);
   };
 
   const handleViewDocument = () => {
@@ -158,6 +183,13 @@ export default function Upload() {
           />
         </div>
       </div>
+
+      <BatchDetailsModal
+        open={showBatchModal}
+        onClose={handleBatchModalClose}
+        onSubmit={handleBatchDetailsSubmit}
+        onSkip={handleBatchDetailsSkip}
+      />
 
       <AlertDialog open={showSuccessDialog} onOpenChange={setShowSuccessDialog}>
         <AlertDialogContent>

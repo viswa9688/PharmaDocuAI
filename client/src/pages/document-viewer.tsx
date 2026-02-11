@@ -50,8 +50,15 @@ export default function DocumentViewer() {
     document.body.removeChild(a);
   };
 
-  const handleQACategoryClick = (tabName: string, _alertCategory: string | null) => {
+  const [alertRuleIdFilter, setAlertRuleIdFilter] = useState<string | null>(null);
+
+  const handleQACategoryClick = (tabName: string, alertCategoryOrRuleId: string | null) => {
     setActiveValidationTab(tabName);
+    if (alertCategoryOrRuleId === "user_declared_verification") {
+      setAlertRuleIdFilter("user_declared_verification");
+    } else {
+      setAlertRuleIdFilter(null);
+    }
     if (validationRef.current) {
       validationRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
     }
@@ -124,7 +131,11 @@ export default function DocumentViewer() {
             }
           }}
           activeTab={activeValidationTab}
-          onTabChange={setActiveValidationTab}
+          onTabChange={(tab) => {
+            setActiveValidationTab(tab);
+            setAlertRuleIdFilter(null);
+          }}
+          ruleIdFilter={alertRuleIdFilter}
         />
       </div>
 
