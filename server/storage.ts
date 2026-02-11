@@ -23,7 +23,9 @@ import type {
   ProcessingEvent,
   InsertProcessingEvent,
   IssueResolution,
-  InsertIssueResolution
+  InsertIssueResolution,
+  AlertReview,
+  InsertAlertReview
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -52,6 +54,11 @@ export interface IStorage {
   getIssueResolutions(issueId: string): Promise<IssueResolution[]>;
   getDocumentIssueResolutions(documentId: string): Promise<IssueResolution[]>;
   getIssuesWithResolutions(documentId: string): Promise<{ issue: QualityIssue; resolutions: IssueResolution[] }[]>;
+
+  // Alert Reviews
+  createAlertReview(review: InsertAlertReview): Promise<AlertReview>;
+  getAlertReviewsByDocument(documentId: string): Promise<AlertReview[]>;
+  getAlertReviewsByAlert(alertId: string): Promise<AlertReview[]>;
 
   // Users
   getUser(id: string): Promise<User | undefined>;
@@ -121,6 +128,7 @@ export class MemStorage implements IStorage {
   private usersMap: Map<string, User>;
   private processingEventsMap: Map<string, ProcessingEvent>;
   private issueResolutionsMap: Map<string, IssueResolution>;
+  private alertReviewsMap: Map<string, AlertReview>;
 
   constructor() {
     this.documents = new Map();
@@ -135,6 +143,7 @@ export class MemStorage implements IStorage {
     this.usersMap = new Map();
     this.processingEventsMap = new Map();
     this.issueResolutionsMap = new Map();
+    this.alertReviewsMap = new Map();
   }
 
   // Documents
@@ -295,6 +304,34 @@ export class MemStorage implements IStorage {
       result.push({ issue, resolutions });
     }
     return result;
+  }
+
+  // Alert Reviews
+  async createAlertReview(review: InsertAlertReview): Promise<AlertReview> {
+    const id = randomUUID();
+    const alertReview: AlertReview = {
+      ...review,
+      id,
+      alertTitle: review.alertTitle || null,
+      alertSeverity: review.alertSeverity || null,
+      alertCategory: review.alertCategory || null,
+      pageNumber: review.pageNumber || null,
+      createdAt: new Date(),
+    };
+    this.alertReviewsMap.set(id, alertReview);
+    return alertReview;
+  }
+
+  async getAlertReviewsByDocument(documentId: string): Promise<AlertReview[]> {
+    return Array.from(this.alertReviewsMap.values())
+      .filter(r => r.documentId === documentId)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  }
+
+  async getAlertReviewsByAlert(alertId: string): Promise<AlertReview[]> {
+    return Array.from(this.alertReviewsMap.values())
+      .filter(r => r.alertId === alertId)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
   }
 
   // Users

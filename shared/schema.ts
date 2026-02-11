@@ -58,6 +58,7 @@ export const processingEventTypes = [
   "document_unapproved",
   "issue_approved",
   "issue_rejected",
+  "alert_reviewed",
 ] as const;
 
 export type ProcessingEventType = typeof processingEventTypes[number];
@@ -209,6 +210,31 @@ export const insertIssueResolutionSchema = createInsertSchema(issueResolutions).
 
 export type IssueResolution = typeof issueResolutions.$inferSelect;
 export type InsertIssueResolution = z.infer<typeof insertIssueResolutionSchema>;
+
+export const alertReviewDecisions = ["approved", "disapproved"] as const;
+export type AlertReviewDecision = typeof alertReviewDecisions[number];
+
+export const alertReviews = pgTable("alert_reviews", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  alertId: varchar("alert_id").notNull(),
+  documentId: varchar("document_id").notNull().references(() => documents.id, { onDelete: "cascade" }),
+  reviewerId: varchar("reviewer_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  decision: text("decision").notNull(),
+  comment: text("comment").notNull(),
+  alertTitle: text("alert_title"),
+  alertSeverity: text("alert_severity"),
+  alertCategory: text("alert_category"),
+  pageNumber: integer("page_number"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertAlertReviewSchema = createInsertSchema(alertReviews).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type AlertReview = typeof alertReviews.$inferSelect;
+export type InsertAlertReview = z.infer<typeof insertAlertReviewSchema>;
 
 // Insert schemas
 export const insertDocumentSchema = createInsertSchema(documents).omit({

@@ -411,6 +411,84 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Create alert review
+  app.post("/api/documents/:id/alert-reviews", isAuthenticated, async (req: any, res) => {
+    try {
+      const documentId = req.params.id;
+      const userId = req.user.claims.sub;
+
+      const doc = await storage.getDocument(documentId);
+      if (!doc) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+
+      const { alertId, decision, comment, alertTitle, alertSeverity, alertCategory, pageNumber } = req.body;
+
+      if (!alertId || !decision || !comment) {
+        return res.status(400).json({ error: "alertId, decision, and comment are required" });
+      }
+
+      if (!["approved", "disapproved"].includes(decision)) {
+        return res.status(400).json({ error: "decision must be 'approved' or 'disapproved'" });
+      }
+
+      const review = await storage.createAlertReview({
+        alertId,
+        documentId,
+        reviewerId: userId,
+        decision,
+        comment,
+        alertTitle: alertTitle || null,
+        alertSeverity: alertSeverity || null,
+        alertCategory: alertCategory || null,
+        pageNumber: pageNumber || null,
+      });
+
+      await logEvent("alert_reviewed", "success", {
+        documentId,
+        userId,
+        metadata: {
+          alertId,
+          decision,
+          alertTitle: alertTitle || null,
+          reviewId: review.id,
+        },
+      });
+
+      res.json(review);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get alert reviews for document
+  app.get("/api/documents/:id/alert-reviews", async (req, res) => {
+    try {
+      const reviews = await storage.getAlertReviewsByDocument(req.params.id);
+
+      const reviewsWithUsers = await Promise.all(
+        reviews.map(async (review) => {
+          const user = await storage.getUser(review.reviewerId);
+          return {
+            ...review,
+            reviewer: user ? {
+              id: user.id,
+              firstName: user.firstName,
+              lastName: user.lastName,
+              email: user.email,
+            } : null,
+          };
+        })
+      );
+
+      reviewsWithUsers.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+      res.json(reviewsWithUsers);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Export document data
   app.get("/api/documents/:id/export", async (req, res) => {
     try {

@@ -12,6 +12,7 @@ import {
   users,
   processingEvents,
   issueResolutions,
+  alertReviews,
   type Document,
   type InsertDocument,
   type Page,
@@ -37,6 +38,8 @@ import {
   type InsertProcessingEvent,
   type IssueResolution,
   type InsertIssueResolution,
+  type AlertReview,
+  type InsertAlertReview,
 } from "@shared/schema";
 import { eq, desc, and } from "drizzle-orm";
 import type { IStorage } from "./storage";
@@ -175,6 +178,20 @@ export class DBStorage implements IStorage {
       result.push({ issue, resolutions });
     }
     return result;
+  }
+
+  // Alert Reviews
+  async createAlertReview(review: InsertAlertReview): Promise<AlertReview> {
+    const [result] = await db.insert(alertReviews).values(review).returning();
+    return result;
+  }
+
+  async getAlertReviewsByDocument(documentId: string): Promise<AlertReview[]> {
+    return db.select().from(alertReviews).where(eq(alertReviews.documentId, documentId)).orderBy(alertReviews.createdAt);
+  }
+
+  async getAlertReviewsByAlert(alertId: string): Promise<AlertReview[]> {
+    return db.select().from(alertReviews).where(eq(alertReviews.alertId, alertId)).orderBy(alertReviews.createdAt);
   }
 
   // Users
