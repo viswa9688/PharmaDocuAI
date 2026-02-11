@@ -34,6 +34,9 @@ const QA_CHECK_DEFINITIONS = [
     description: "BMR (Manufacturing) is an accurate reproduction of current Master Product Card.",
     category: "discrepancies" as const,
     alertCategory: null as AlertCategory | null,
+    getRelatedAlerts: (input: QAChecklistInput): ValidationAlert[] => {
+      return input.allAlerts.filter(a => a.category === "consistency_error" || a.category === "data_quality");
+    },
     evaluate: (input: QAChecklistInput): { status: QACheckItemStatus; count: number; details: string | null } => {
       if (!input.hasBmrVerification) {
         const discrepancyAlerts = input.allAlerts.filter(a => a.category === "consistency_error" || a.category === "data_quality");
@@ -55,6 +58,9 @@ const QA_CHECK_DEFINITIONS = [
     description: "All raw materials are used as per standard quantity (BoM).",
     category: "discrepancies" as const,
     alertCategory: "data_quality" as AlertCategory | null,
+    getRelatedAlerts: (input: QAChecklistInput): ValidationAlert[] => {
+      return input.allAlerts.filter(a => a.category === "range_violation" || a.category === "data_quality");
+    },
     evaluate: (input: QAChecklistInput): { status: QACheckItemStatus; count: number; details: string | null } => {
       if (!input.hasRawMaterialVerification) {
         const rangeAlerts = input.allAlerts.filter(a => a.category === "range_violation");
@@ -76,6 +82,12 @@ const QA_CHECK_DEFINITIONS = [
     description: "Correct product name and Batch No. mentioned on all the pages of documents.",
     category: "missing" as const,
     alertCategory: "missing_value" as AlertCategory | null,
+    getRelatedAlerts: (input: QAChecklistInput): ValidationAlert[] => {
+      return input.allAlerts.filter(a => 
+        (a.category === "missing_value" || a.category === "consistency_error") &&
+        (a.title.toLowerCase().includes("batch") || a.title.toLowerCase().includes("product name") || a.title.toLowerCase().includes("lot"))
+      );
+    },
     evaluate: (input: QAChecklistInput): { status: QACheckItemStatus; count: number; details: string | null } => {
       const batchAlerts = input.allAlerts.filter(a => 
         (a.category === "missing_value" || a.category === "consistency_error") &&
@@ -94,6 +106,12 @@ const QA_CHECK_DEFINITIONS = [
     description: "Number of pages is tallying with the specified numbers as issued.",
     category: "missing" as const,
     alertCategory: "missing_value" as AlertCategory | null,
+    getRelatedAlerts: (input: QAChecklistInput): ValidationAlert[] => {
+      return input.allAlerts.filter(a => 
+        a.ruleId === "page_completeness_missing" || 
+        a.title.toLowerCase().includes("missing page")
+      );
+    },
     evaluate: (input: QAChecklistInput): { status: QACheckItemStatus; count: number; details: string | null } => {
       const missingPageAlerts = input.allAlerts.filter(a => 
         a.ruleId === "page_completeness_missing" || 
@@ -112,6 +130,12 @@ const QA_CHECK_DEFINITIONS = [
     description: "Mfg. and Exp. date of product is correct and shelf life is matching with the Batch no. allocation log.",
     category: "violations" as const,
     alertCategory: "sequence_error" as AlertCategory | null,
+    getRelatedAlerts: (input: QAChecklistInput): ValidationAlert[] => {
+      return input.allAlerts.filter(a => 
+        a.category === "sequence_error" || 
+        (a.title.toLowerCase().includes("date") && (a.category === "missing_value" || a.category === "range_violation"))
+      );
+    },
     evaluate: (input: QAChecklistInput): { status: QACheckItemStatus; count: number; details: string | null } => {
       const dateAlerts = input.allAlerts.filter(a => 
         a.category === "sequence_error" || 
@@ -134,6 +158,11 @@ const QA_CHECK_DEFINITIONS = [
     description: "Manufacturing process details are recorded properly in the relevant pages with signature, date and time.",
     category: "missing" as const,
     alertCategory: "missing_value" as AlertCategory | null,
+    getRelatedAlerts: (input: QAChecklistInput): ValidationAlert[] => {
+      return input.allAlerts.filter(a => 
+        a.title.toLowerCase().includes("signature") || a.title.toLowerCase().includes("missing sign")
+      );
+    },
     evaluate: (input: QAChecklistInput): { status: QACheckItemStatus; count: number; details: string | null } => {
       const sigAlerts = input.allAlerts.filter(a => 
         a.title.toLowerCase().includes("signature") || a.title.toLowerCase().includes("missing sign")
@@ -154,6 +183,11 @@ const QA_CHECK_DEFINITIONS = [
     description: "All in-process findings are within the limit of the specified set parameters.",
     category: "calculations" as const,
     alertCategory: "calculation_error" as AlertCategory | null,
+    getRelatedAlerts: (input: QAChecklistInput): ValidationAlert[] => {
+      return input.allAlerts.filter(a => 
+        a.category === "calculation_error" || a.category === "range_violation"
+      );
+    },
     evaluate: (input: QAChecklistInput): { status: QACheckItemStatus; count: number; details: string | null } => {
       const calcAlerts = input.allAlerts.filter(a => 
         a.category === "calculation_error" || a.category === "range_violation"
@@ -171,6 +205,12 @@ const QA_CHECK_DEFINITIONS = [
     description: "Any overwriting in the document is corrected and signed as per SOP.",
     category: "integrity" as const,
     alertCategory: "data_integrity" as AlertCategory | null,
+    getRelatedAlerts: (input: QAChecklistInput): ValidationAlert[] => {
+      return input.allAlerts.filter(a => 
+        a.category === "data_integrity" && 
+        (a.title.toLowerCase().includes("overwrite") || a.title.toLowerCase().includes("strike"))
+      );
+    },
     evaluate: (input: QAChecklistInput): { status: QACheckItemStatus; count: number; details: string | null } => {
       const overwriteAlerts = input.allAlerts.filter(a => 
         a.category === "data_integrity" && 
@@ -189,6 +229,12 @@ const QA_CHECK_DEFINITIONS = [
     description: "Any corrections in the document are corrected and signed by concerned person.",
     category: "integrity" as const,
     alertCategory: "data_integrity" as AlertCategory | null,
+    getRelatedAlerts: (input: QAChecklistInput): ValidationAlert[] => {
+      return input.allAlerts.filter(a => 
+        a.category === "data_integrity" && 
+        (a.title.toLowerCase().includes("correction") || a.title.toLowerCase().includes("red") || a.title.toLowerCase().includes("erasure"))
+      );
+    },
     evaluate: (input: QAChecklistInput): { status: QACheckItemStatus; count: number; details: string | null } => {
       const correctionAlerts = input.allAlerts.filter(a => 
         a.category === "data_integrity" && 
@@ -207,6 +253,13 @@ const QA_CHECK_DEFINITIONS = [
     description: "Batch record reviewed and signed by approved person from Production department.",
     category: "missing" as const,
     alertCategory: "missing_value" as AlertCategory | null,
+    getRelatedAlerts: (input: QAChecklistInput): ValidationAlert[] => {
+      return input.allAlerts.filter(a => 
+        (a.title.toLowerCase().includes("signature") && a.title.toLowerCase().includes("review")) ||
+        (a.title.toLowerCase().includes("verified by") && a.category === "missing_value") ||
+        (a.title.toLowerCase().includes("approved by") && a.category === "missing_value")
+      );
+    },
     evaluate: (input: QAChecklistInput): { status: QACheckItemStatus; count: number; details: string | null } => {
       const reviewSignAlerts = input.allAlerts.filter(a => 
         (a.title.toLowerCase().includes("signature") && a.title.toLowerCase().includes("review")) ||
@@ -229,6 +282,9 @@ const QA_CHECK_DEFINITIONS = [
     description: "Any data integrity issues observed (Any alteration of data happened after completion of BMR entry).",
     category: "integrity" as const,
     alertCategory: "data_integrity" as AlertCategory | null,
+    getRelatedAlerts: (input: QAChecklistInput): ValidationAlert[] => {
+      return input.allAlerts.filter(a => a.category === "data_integrity");
+    },
     evaluate: (input: QAChecklistInput): { status: QACheckItemStatus; count: number; details: string | null } => {
       const integrityAlerts = input.allAlerts.filter(a => a.category === "data_integrity");
       if (integrityAlerts.length > 0) {
@@ -244,6 +300,9 @@ const QA_CHECK_DEFINITIONS = [
     description: "Product Name, Start/End Date, Batch No., Manufacturing Date, and Expiry Date match user-declared values entered at upload.",
     category: "discrepancies" as const,
     alertCategory: "consistency_error" as AlertCategory | null,
+    getRelatedAlerts: (input: QAChecklistInput): ValidationAlert[] => {
+      return input.allAlerts.filter(a => a.ruleId === "user_declared_verification");
+    },
     evaluate: (input: QAChecklistInput): { status: QACheckItemStatus; count: number; details: string | null } => {
       if (!input.hasUserDeclaredFields) {
         return { status: "na", count: 0, details: "No user-declared batch details were provided at upload" };
@@ -265,6 +324,7 @@ const QA_CHECK_DEFINITIONS = [
 export function evaluateQAChecklist(input: QAChecklistInput): QAChecklist {
   const items: QACheckItem[] = QA_CHECK_DEFINITIONS.map(def => {
     const result = def.evaluate(input);
+    const relatedAlerts = result.status === "fail" ? def.getRelatedAlerts(input) : [];
     return {
       id: def.id,
       checkNumber: def.checkNumber,
@@ -275,6 +335,7 @@ export function evaluateQAChecklist(input: QAChecklistInput): QAChecklist {
       alertCategory: def.alertCategory,
       relatedAlertCount: result.count,
       details: result.details,
+      relatedAlerts: relatedAlerts.length > 0 ? relatedAlerts : undefined,
     };
   });
 

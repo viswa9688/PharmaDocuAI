@@ -714,6 +714,7 @@ export type QACheckItem = {
   alertCategory: AlertCategory | null;
   relatedAlertCount: number;
   details: string | null;
+  relatedAlerts?: ValidationAlert[];
 };
 
 export type QAChecklist = {
