@@ -92,6 +92,31 @@ function StatusIcon({ status }: { status: QACheckItem["status"] }) {
   return <MinusCircle className="h-5 w-5 text-muted-foreground shrink-0" />;
 }
 
+function InferenceCell({ status }: { status: QACheckItem["status"] }) {
+  if (status === "pass") {
+    return (
+      <span className="inline-flex items-center gap-1 text-sm font-semibold text-green-600 dark:text-green-400" data-testid="text-inference-yes">
+        <CheckCircle2 className="h-4 w-4" />
+        Yes
+      </span>
+    );
+  }
+  if (status === "fail") {
+    return (
+      <span className="inline-flex items-center gap-1 text-sm font-semibold text-destructive" data-testid="text-inference-no">
+        <XCircle className="h-4 w-4" />
+        No
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-sm font-semibold text-muted-foreground" data-testid="text-inference-na">
+      <MinusCircle className="h-4 w-4" />
+      N/A
+    </span>
+  );
+}
+
 function AlertRowExpandable({ 
   alert, 
   documentId,
@@ -347,7 +372,6 @@ export function QAChecklistCard({ documentId, onCategoryClick, onViewPage }: QAC
   const adjustedCounts = useMemo(() => {
     if (!checklist) return null;
 
-    let approvedAlertCount = 0;
     let checkpointsFlipped = 0;
 
     for (const item of checklist.items) {
@@ -358,12 +382,6 @@ export function QAChecklistCard({ documentId, onCategoryClick, onViewPage }: QAC
         });
         if (allApproved) {
           checkpointsFlipped++;
-        }
-        for (const alert of item.relatedAlerts) {
-          const review = reviewsByAlertId.get(alert.id);
-          if (review?.decision === "approved") {
-            approvedAlertCount++;
-          }
         }
       }
     }
@@ -443,32 +461,43 @@ export function QAChecklistCard({ documentId, onCategoryClick, onViewPage }: QAC
 
         <Separator className="my-4" />
 
-        <Accordion type="multiple" className="space-y-1">
-          {checklist.items.map((item) => (
-            <QACheckAccordionItem 
-              key={item.id} 
-              item={item} 
-              documentId={documentId}
-              onViewPage={onViewPage}
-              reviewsByAlertId={reviewsByAlertId}
-            />
-          ))}
-        </Accordion>
+        <div className="border rounded-md overflow-visible">
+          <div className="grid grid-cols-[1fr_120px_1fr] border-b bg-muted/50">
+            <div className="p-3 text-sm font-semibold">Checkpoints</div>
+            <div className="p-3 text-sm font-semibold text-center border-l">Inference of AI Reviewer</div>
+            <div className="p-3 text-sm font-semibold border-l">Remarks</div>
+          </div>
+
+          <Accordion type="multiple">
+            {checklist.items.map((item, index) => (
+              <QACheckTableRow
+                key={item.id}
+                item={item}
+                documentId={documentId}
+                onViewPage={onViewPage}
+                reviewsByAlertId={reviewsByAlertId}
+                isLast={index === checklist.items.length - 1}
+              />
+            ))}
+          </Accordion>
+        </div>
       </CardContent>
     </Card>
   );
 }
 
-function QACheckAccordionItem({ 
+function QACheckTableRow({ 
   item, 
   documentId,
   onViewPage,
   reviewsByAlertId,
+  isLast,
 }: { 
   item: QACheckItem; 
   documentId: string;
   onViewPage?: (pageNumber: number) => void;
   reviewsByAlertId: Map<string, AlertReviewWithUser>;
+  isLast: boolean;
 }) {
   const CategoryIcon = categoryIcons[item.category] || AlertTriangle;
   const hasAlerts = item.status === "fail" && item.relatedAlerts && item.relatedAlerts.length > 0;
@@ -486,27 +515,37 @@ function QACheckAccordionItem({
     : 0;
 
   const effectiveStatus = allAlertsApproved ? "pass" : item.status;
+  const borderClass = isLast ? "" : "border-b";
 
   if (!hasAlerts) {
     return (
       <div 
-        className={`flex items-start gap-3 p-3 rounded-md ${
-          item.status === "fail" ? "bg-red-50/50 dark:bg-red-950/30" : ""
+        className={`grid grid-cols-[1fr_120px_1fr] ${borderClass} ${
+          item.status === "fail" ? "bg-red-50/30 dark:bg-red-950/20" : ""
         }`}
         data-testid={`qa-check-item-${item.id}`}
       >
-        <StatusIcon status={item.status} />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-medium" data-testid={`text-qa-check-title-${item.id}`}>
-              {item.checkNumber}. {item.title}
-            </span>
-            <Badge variant="outline" className="text-xs">
-              <CategoryIcon className="h-3 w-3 mr-1" />
-              {categoryLabels[item.category]}
-            </Badge>
+        <div className="p-3">
+          <div className="flex items-start gap-2">
+            <StatusIcon status={item.status} />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-medium" data-testid={`text-qa-check-title-${item.id}`}>
+                  {item.checkNumber}. {item.title}
+                </span>
+                <Badge variant="outline" className="text-xs">
+                  <CategoryIcon className="h-3 w-3 mr-1" />
+                  {categoryLabels[item.category]}
+                </Badge>
+              </div>
+            </div>
           </div>
-          <p className="text-xs text-muted-foreground mt-1">{item.description}</p>
+        </div>
+        <div className="p-3 flex items-start justify-center border-l">
+          <InferenceCell status={item.status} />
+        </div>
+        <div className="p-3 border-l">
+          <p className="text-xs text-muted-foreground">{item.description}</p>
           {item.details && (
             <p className={`text-xs mt-1 ${
               item.status === "fail" ? "text-destructive" : "text-green-600 dark:text-green-400"
@@ -520,48 +559,56 @@ function QACheckAccordionItem({
   }
 
   return (
-    <AccordionItem value={item.id} className="border-0" data-testid={`qa-check-item-${item.id}`}>
-      <AccordionTrigger className={`p-3 rounded-md hover:no-underline [&[data-state=open]]:rounded-b-none ${
+    <AccordionItem value={item.id} className={`border-0 ${borderClass}`} data-testid={`qa-check-item-${item.id}`}>
+      <div className={`grid grid-cols-[1fr_120px_1fr] ${
         allAlertsApproved 
-          ? "bg-green-50/50 dark:bg-green-950/30" 
-          : "bg-red-50/50 dark:bg-red-950/30"
+          ? "bg-green-50/30 dark:bg-green-950/20" 
+          : "bg-red-50/30 dark:bg-red-950/20"
       }`}>
-        <div className="flex items-start gap-3 flex-1 text-left">
-          <StatusIcon status={effectiveStatus} />
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm font-medium" data-testid={`text-qa-check-title-${item.id}`}>
-                {item.checkNumber}. {item.title}
-              </span>
-              <Badge variant="outline" className="text-xs">
-                <CategoryIcon className="h-3 w-3 mr-1" />
-                {categoryLabels[item.category]}
-              </Badge>
-              {allAlertsApproved ? (
-                <Badge variant="default" className="text-xs" data-testid={`badge-qa-approved-${item.id}`}>
-                  All Approved
-                </Badge>
-              ) : (
-                <>
-                  {unapprovedCount > 0 && (
-                    <Badge variant="destructive" className="text-xs" data-testid={`badge-qa-alert-count-${item.id}`}>
-                      {unapprovedCount} {unapprovedCount === 1 ? "issue" : "issues"} remaining
+        <div className="p-3">
+          <AccordionTrigger className="group p-0 hover:no-underline [&>svg]:hidden">
+            <div className="flex items-start gap-2 flex-1 text-left">
+              <StatusIcon status={effectiveStatus} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-medium" data-testid={`text-qa-check-title-${item.id}`}>
+                    {item.checkNumber}. {item.title}
+                  </span>
+                  <Badge variant="outline" className="text-xs">
+                    <CategoryIcon className="h-3 w-3 mr-1" />
+                    {categoryLabels[item.category]}
+                  </Badge>
+                  {allAlertsApproved ? (
+                    <Badge variant="default" className="text-xs" data-testid={`badge-qa-approved-${item.id}`}>
+                      All Approved
                     </Badge>
+                  ) : (
+                    unapprovedCount > 0 && (
+                      <Badge variant="destructive" className="text-xs" data-testid={`badge-qa-alert-count-${item.id}`}>
+                        {unapprovedCount} {unapprovedCount === 1 ? "issue" : "issues"} remaining
+                      </Badge>
+                    )
                   )}
-                </>
-              )}
+                  <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
+                </div>
+              </div>
             </div>
-            <p className="text-xs text-muted-foreground mt-1">{item.description}</p>
-            {item.details && (
-              <p className={`text-xs mt-1 ${allAlertsApproved ? "text-green-600 dark:text-green-400" : "text-destructive"}`} data-testid={`text-qa-check-details-${item.id}`}>
-                {allAlertsApproved ? "All issues reviewed and approved" : item.details}
-              </p>
-            )}
-          </div>
+          </AccordionTrigger>
         </div>
-      </AccordionTrigger>
-      <AccordionContent className={`${allAlertsApproved ? "bg-green-50/30 dark:bg-green-950/20" : "bg-red-50/30 dark:bg-red-950/20"} rounded-b-md px-3 pb-3 pt-0`}>
-        <div className="space-y-2 pl-8">
+        <div className="p-3 flex items-start justify-center border-l">
+          <InferenceCell status={effectiveStatus} />
+        </div>
+        <div className="p-3 border-l">
+          <p className="text-xs text-muted-foreground">{item.description}</p>
+          {item.details && (
+            <p className={`text-xs mt-1 ${allAlertsApproved ? "text-green-600 dark:text-green-400" : "text-destructive"}`} data-testid={`text-qa-check-details-${item.id}`}>
+              {allAlertsApproved ? "All issues reviewed and approved" : item.details}
+            </p>
+          )}
+        </div>
+      </div>
+      <AccordionContent className={`${allAlertsApproved ? "bg-green-50/20 dark:bg-green-950/10" : "bg-red-50/20 dark:bg-red-950/10"} px-3 pb-3 pt-0`}>
+        <div className="space-y-2 pl-7">
           {item.relatedAlerts!.map((alert) => (
             <AlertRowExpandable 
               key={alert.id} 
