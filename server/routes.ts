@@ -336,6 +336,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       });
 
+      // Save PDF to disk for potential re-extraction later
+      try {
+        const pdfDir = path.join(process.cwd(), "uploads", "pdfs");
+        const fsP = (await import('fs')).promises;
+        await fsP.mkdir(pdfDir, { recursive: true });
+        await fsP.writeFile(path.join(pdfDir, `${doc.id}.pdf`), req.file.buffer);
+      } catch (saveErr: any) {
+        console.warn("Failed to save PDF to disk:", saveErr.message);
+      }
+
       // Start processing asynchronously
       processDocument(doc.id, req.file.buffer).catch(error => {
         console.error("Error processing document:", error);
@@ -1310,13 +1320,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { docId, pageNumber } = req.params;
       
-      // Validate document exists
       const doc = await storage.getDocument(docId);
       if (!doc) {
         return res.status(404).json({ error: "Document not found" });
       }
 
-      // Get page scoped to this document
       const pages = await storage.getPagesByDocument(docId);
       const page = pages.find(p => p.pageNumber === parseInt(pageNumber));
       
@@ -1324,12 +1332,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Page image not found" });
       }
 
-      // Sanitize and validate image path to prevent directory traversal
       const uploadsDir = path.join(process.cwd(), "uploads");
       const requestedPath = path.join(uploadsDir, page.imagePath);
       const normalizedPath = path.normalize(requestedPath);
       
-      // Ensure the resolved path is within uploads directory using relative path check
       const relativePath = path.relative(uploadsDir, normalizedPath);
       if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
         console.error("Directory traversal attempt detected:", { 
@@ -1340,9 +1346,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Invalid image path" });
       }
 
+      const fsModule = await import('fs');
+      if (!fsModule.existsSync(normalizedPath)) {
+        return res.status(404).json({ error: "Image file not found on disk. Try re-extracting images." });
+      }
+
       res.sendFile(normalizedPath);
     } catch (error: any) {
       console.error("Error serving page image:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Re-extract page images for a document from saved PDF
+  app.post("/api/documents/:docId/re-extract-images", async (req, res) => {
+    try {
+      const { docId } = req.params;
+      const doc = await storage.getDocument(docId);
+      if (!doc) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+
+      const fsPromises = (await import('fs')).promises;
+      const pdfPath = path.join(process.cwd(), "uploads", "pdfs", `${docId}.pdf`);
+      
+      if (!(await fsPromises.access(pdfPath).then(() => true).catch(() => false))) {
+        return res.status(404).json({ error: "Original PDF file not available. Please re-upload the document." });
+      }
+
+      const pdfBuffer = await fsPromises.readFile(pdfPath);
+      const pageImages = await pdfProcessor.extractPageImages(pdfBuffer, docId);
+
+      const pages = await storage.getPagesByDocument(docId);
+      for (const page of pages) {
+        const newImagePath = pageImages[page.pageNumber - 1];
+        if (newImagePath && newImagePath !== page.imagePath) {
+          await storage.updatePage(page.id, { imagePath: newImagePath });
+        }
+      }
+
+      res.json({ success: true, imagesExtracted: pageImages.length });
+    } catch (error: any) {
+      console.error("Error re-extracting images:", error);
       res.status(500).json({ error: error.message });
     }
   });

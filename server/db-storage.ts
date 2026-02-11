@@ -103,6 +103,11 @@ export class DBStorage implements IStorage {
     return page;
   }
 
+  async updatePage(id: string, updates: Partial<Page>): Promise<Page | undefined> {
+    const [page] = await db.update(pages).set(updates).where(eq(pages.id, id)).returning();
+    return page;
+  }
+
   // Quality Issues
   async createQualityIssue(insertIssue: InsertQualityIssue): Promise<QualityIssue> {
     const issueData = {

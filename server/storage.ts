@@ -41,6 +41,7 @@ export interface IStorage {
   createPage(page: InsertPage): Promise<Page>;
   getPagesByDocument(documentId: string): Promise<Page[]>;
   getPage(id: string): Promise<Page | undefined>;
+  updatePage(id: string, updates: Partial<Page>): Promise<Page | undefined>;
 
   // Quality Issues
   createQualityIssue(issue: InsertQualityIssue): Promise<QualityIssue>;
@@ -221,6 +222,14 @@ export class MemStorage implements IStorage {
 
   async getPage(id: string): Promise<Page | undefined> {
     return this.pages.get(id);
+  }
+
+  async updatePage(id: string, updates: Partial<Page>): Promise<Page | undefined> {
+    const page = this.pages.get(id);
+    if (!page) return undefined;
+    const updated = { ...page, ...updates };
+    this.pages.set(id, updated);
+    return updated;
   }
 
   // Quality Issues
