@@ -211,9 +211,15 @@ export class DBStorage implements IStorage {
         .where(eq(users.email, userData.email));
     }
     
+    const existingUsers = await db.select({ id: users.id }).from(users).limit(1);
+    const isFirstUser = existingUsers.length === 0;
+
     const [user] = await db
       .insert(users)
-      .values(userData)
+      .values({
+        ...userData,
+        role: isFirstUser ? "admin" : (userData.role || "viewer"),
+      })
       .returning();
     return user;
   }

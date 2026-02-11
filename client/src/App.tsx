@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { RouteGuard } from "@/components/route-guard";
 import NotFound from "@/pages/not-found";
 import Landing from "@/pages/landing";
 import Upload from "@/pages/upload";
@@ -19,22 +20,52 @@ import BatchAllocationVerification from "@/pages/batch-allocation-verification";
 import Dashboard from "@/pages/dashboard";
 import AuditTrail from "@/pages/audit-trail";
 import Approved from "@/pages/approved";
+import UserManagement from "@/pages/user-management";
 
 function Router() {
   return (
     <Switch>
       <Route path="/" component={Landing} />
-      <Route path="/upload" component={Upload} />
+      <Route path="/upload">
+        <RouteGuard requireAuth requiredRoles={["admin", "reviewer", "operator"]}>
+          <Upload />
+        </RouteGuard>
+      </Route>
       <Route path="/documents" component={Documents} />
       <Route path="/documents/:id" component={DocumentViewer} />
       <Route path="/processing" component={Processing} />
-      <Route path="/settings" component={Settings} />
-      <Route path="/bmr-verification" component={BMRVerification} />
-      <Route path="/raw-material" component={RawMaterialVerification} />
-      <Route path="/batch-allocation" component={BatchAllocationVerification} />
+      <Route path="/settings">
+        <RouteGuard requireAuth requiredRoles={["admin"]}>
+          <Settings />
+        </RouteGuard>
+      </Route>
+      <Route path="/bmr-verification">
+        <RouteGuard requireAuth requiredRoles={["admin", "reviewer", "operator"]}>
+          <BMRVerification />
+        </RouteGuard>
+      </Route>
+      <Route path="/raw-material">
+        <RouteGuard requireAuth requiredRoles={["admin", "reviewer", "operator"]}>
+          <RawMaterialVerification />
+        </RouteGuard>
+      </Route>
+      <Route path="/batch-allocation">
+        <RouteGuard requireAuth requiredRoles={["admin", "reviewer", "operator"]}>
+          <BatchAllocationVerification />
+        </RouteGuard>
+      </Route>
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/audit-trail" component={AuditTrail} />
-      <Route path="/approved" component={Approved} />
+      <Route path="/approved">
+        <RouteGuard requireAuth requiredRoles={["admin", "reviewer"]}>
+          <Approved />
+        </RouteGuard>
+      </Route>
+      <Route path="/user-management">
+        <RouteGuard requireAuth requiredRoles={["admin"]}>
+          <UserManagement />
+        </RouteGuard>
+      </Route>
       <Route component={NotFound} />
     </Switch>
   );

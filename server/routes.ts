@@ -107,8 +107,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Admin access required" });
       }
       const { role } = req.body;
-      const validRoles = ['admin', 'reviewer', 'operator', 'viewer'];
-      if (!validRoles.includes(role)) {
+      const validRoles = ["admin", "reviewer", "operator", "viewer"];
+      if (!role || !validRoles.includes(role)) {
         return res.status(400).json({ error: "Invalid role" });
       }
       const updated = await storage.updateUserRole(req.params.userId, role);

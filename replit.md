@@ -31,7 +31,7 @@ The backend uses Express with Drizzle ORM. PostgreSQL serves as the primary data
 - **QA Review Checklist**: Maps 12 pharmaceutical QA checkpoints against automated validation results, providing pass/fail/N/A status for each, with click-through navigation to relevant validation tabs. Point 12 verifies user-declared batch details against extracted data.
 - **User-Declared Batch Details Verification**: A modal prompt at upload time collects Product Name, Start Date, End Date, Batch No., Manufacturing Date, and Expiry Date. These are compared against extracted BMR data after processing, generating consistency alerts for mismatches. Results feed into QA checklist Point 12 with dedicated click-through filtering.
 - **Issue Resolution**: Tracks and resolves validation issues with an approve/reject workflow, including comments and resolution timestamps.
-- **User Management**: Integrates with Replit Auth (OIDC) for user authentication and stores user profiles in a `users` table.
+- **User Management**: Integrates with Replit Auth (OIDC) for user authentication and stores user profiles in a `users` table. Includes role-based access control (RBAC) with four roles: admin, reviewer, operator, and viewer. The first user to sign in automatically becomes admin. Admin users can manage roles via the User Management page. Protected routes enforce role requirements both client-side (RouteGuard component) and server-side (isAuthenticated middleware + role checks). Login/logout buttons and user profile display are shown in the sidebar footer.
 
 ## External Dependencies
 - **Google Cloud Platform**:
