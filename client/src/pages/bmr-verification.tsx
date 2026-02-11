@@ -9,7 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { PageImageOverlay, type DiscrepancyOverlay } from "@/components/page-image-overlay";
+import { PageImageOverlay } from "@/components/page-image-overlay";
 import { 
   Upload, 
   FileCheck, 
@@ -493,37 +493,6 @@ export default function BMRVerificationPage() {
                             <PageImageOverlay
                               page={currentPage}
                               imageUrl={`/api/documents/${selectedResult.verification.documentId}/pages/${currentPage.pageNumber}/image`}
-                              discrepancyOverlays={
-                                // Collect all discrepancy overlays for the current page
-                                // Each discrepancy may have both MPC and BMR bounding boxes on this page
-                                selectedResult.discrepancies.flatMap(d => {
-                                  const overlays: DiscrepancyOverlay[] = [];
-                                  
-                                  // Add MPC bounding box if on this page
-                                  if (d.mpcBoundingBox && d.mpcBoundingBox.pageNumber === selectedPageNumber) {
-                                    overlays.push({
-                                      id: `${d.id}-mpc`,
-                                      fieldName: `${d.fieldName} (MPC)`,
-                                      severity: d.severity,
-                                      description: `MPC: ${d.mpcValue || 'N/A'}`,
-                                      boundingBox: d.mpcBoundingBox
-                                    });
-                                  }
-                                  
-                                  // Add BMR bounding box if on this page
-                                  if (d.bmrBoundingBox && d.bmrBoundingBox.pageNumber === selectedPageNumber) {
-                                    overlays.push({
-                                      id: `${d.id}-bmr`,
-                                      fieldName: `${d.fieldName} (BMR)`,
-                                      severity: d.severity,
-                                      description: `BMR: ${d.bmrValue || 'N/A'}`,
-                                      boundingBox: d.bmrBoundingBox
-                                    });
-                                  }
-                                  
-                                  return overlays;
-                                })
-                              }
                             />
                           ) : (
                             <div className="flex items-center justify-center h-96 text-muted-foreground">
@@ -599,30 +568,6 @@ export default function BMRVerificationPage() {
               <PageImageOverlay
                 page={currentPage}
                 imageUrl={`/api/documents/${selectedResult.verification.documentId}/pages/${currentPage.pageNumber}/image`}
-                discrepancyOverlays={
-                  selectedResult.discrepancies.flatMap(d => {
-                    const overlays: DiscrepancyOverlay[] = [];
-                    if (d.mpcBoundingBox && d.mpcBoundingBox.pageNumber === selectedPageNumber) {
-                      overlays.push({
-                        id: `${d.id}-mpc`,
-                        fieldName: `${d.fieldName} (MPC)`,
-                        severity: d.severity,
-                        description: `MPC: ${d.mpcValue || 'N/A'}`,
-                        boundingBox: d.mpcBoundingBox
-                      });
-                    }
-                    if (d.bmrBoundingBox && d.bmrBoundingBox.pageNumber === selectedPageNumber) {
-                      overlays.push({
-                        id: `${d.id}-bmr`,
-                        fieldName: `${d.fieldName} (BMR)`,
-                        severity: d.severity,
-                        description: `BMR: ${d.bmrValue || 'N/A'}`,
-                        boundingBox: d.bmrBoundingBox
-                      });
-                    }
-                    return overlays;
-                  })
-                }
               />
             ) : (
               <div className="flex items-center justify-center h-96 text-muted-foreground">
