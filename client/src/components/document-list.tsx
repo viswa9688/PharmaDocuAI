@@ -1,15 +1,131 @@
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FileText, Eye, Download, Trash2 } from "lucide-react";
-import type { Document } from "@shared/schema";
-import { formatDistance } from "date-fns";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { FileText, Eye, Download, Trash2, ClipboardList, ThumbsUp, ThumbsDown, Loader2 } from "lucide-react";
+import type { Document, AlertReview } from "@shared/schema";
+import { formatDistance, format } from "date-fns";
+
+interface AlertReviewWithUser extends AlertReview {
+  reviewer: {
+    id: string;
+    firstName: string | null;
+    lastName: string | null;
+    email: string | null;
+  } | null;
+}
 
 interface DocumentListProps {
   documents: Document[];
   onView?: (doc: Document) => void;
   onDownload?: (doc: Document) => void;
   onDelete?: (doc: Document) => void;
+}
+
+function ReviewLogDialog({ documentId, documentName }: { documentId: string; documentName: string }) {
+  const [open, setOpen] = useState(false);
+
+  const { data: reviews = [], isLoading } = useQuery<AlertReviewWithUser[]>({
+    queryKey: ["/api/documents", documentId, "alert-reviews"],
+    enabled: open,
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          size="icon"
+          variant="ghost"
+          data-testid={`button-review-log-${documentId}`}
+        >
+          <ClipboardList className="h-4 w-4" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle data-testid="text-review-log-title">Alert Review Log</DialogTitle>
+          <DialogDescription>{documentName}</DialogDescription>
+        </DialogHeader>
+
+        {isLoading ? (
+          <div className="flex items-center justify-center h-24">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : reviews.length === 0 ? (
+          <div className="text-center text-muted-foreground py-8">
+            <ClipboardList className="h-8 w-8 mx-auto mb-2" />
+            <p className="text-sm">No alert reviews yet</p>
+          </div>
+        ) : (
+          <ScrollArea className="max-h-[60vh]">
+            <div className="space-y-3 pr-3">
+              {reviews.map((review) => (
+                <div 
+                  key={review.id} 
+                  className="rounded-md border p-3 space-y-2"
+                  data-testid={`review-log-entry-${review.id}`}
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {review.decision === "approved" ? (
+                      <Badge variant="default" className="text-xs">
+                        <ThumbsUp className="h-3 w-3 mr-1" />
+                        Approved
+                      </Badge>
+                    ) : (
+                      <Badge variant="destructive" className="text-xs">
+                        <ThumbsDown className="h-3 w-3 mr-1" />
+                        Disapproved
+                      </Badge>
+                    )}
+                    {review.alertSeverity && (
+                      <Badge variant="outline" className="text-xs">
+                        {review.alertSeverity}
+                      </Badge>
+                    )}
+                    {review.pageNumber && (
+                      <Badge variant="outline" className="text-xs">
+                        Page {review.pageNumber}
+                      </Badge>
+                    )}
+                  </div>
+
+                  {review.alertTitle && (
+                    <p className="text-sm font-medium">{review.alertTitle}</p>
+                  )}
+
+                  <p className="text-xs text-muted-foreground italic">
+                    "{review.comment}"
+                  </p>
+
+                  <Separator />
+
+                  <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground flex-wrap">
+                    <span>
+                      {review.reviewer
+                        ? `${review.reviewer.firstName || ""} ${review.reviewer.lastName || ""}`.trim() || review.reviewer.email || "Unknown"
+                        : "Unknown reviewer"}
+                    </span>
+                    <span>{format(new Date(review.createdAt), "MMM d, yyyy h:mm a")}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 export function DocumentList({ documents, onView, onDownload, onDelete }: DocumentListProps) {
@@ -84,6 +200,7 @@ export function DocumentList({ documents, onView, onDownload, onDelete }: Docume
                   >
                     <Eye className="h-4 w-4" />
                   </Button>
+                  <ReviewLogDialog documentId={doc.id} documentName={doc.filename} />
                   <Button
                     size="icon"
                     variant="ghost"
