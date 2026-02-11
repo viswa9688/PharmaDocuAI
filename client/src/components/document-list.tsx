@@ -154,7 +154,7 @@ function ReviewLogDialog({ documentId, documentName }: { documentId: string; doc
           <ClipboardList className="h-4 w-4" />
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-2xl max-h-[85vh]">
         <DialogHeader>
           <DialogTitle data-testid="text-review-log-title">Alert Review Log</DialogTitle>
           <DialogDescription>{documentName}</DialogDescription>
