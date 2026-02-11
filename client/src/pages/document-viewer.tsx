@@ -1,5 +1,5 @@
-import { useState, useRef } from "react";
-import { useParams, useLocation } from "wouter";
+import { useState, useRef, useEffect } from "react";
+import { useParams, useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { DocumentStats } from "@/components/document-stats";
@@ -15,6 +15,7 @@ export default function DocumentViewer() {
   const params = useParams();
   const [, setLocation] = useLocation();
   const documentId = params.id as string;
+  const searchString = useSearch();
   const [selectedPage, setSelectedPage] = useState<Page | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [activeValidationTab, setActiveValidationTab] = useState<string | null>(null);
@@ -31,6 +32,20 @@ export default function DocumentViewer() {
   const { data: issues = [] } = useQuery<QualityIssue[]>({
     queryKey: ["/api/documents", documentId, "issues"],
   });
+
+  useEffect(() => {
+    if (pages.length > 0 && searchString) {
+      const urlParams = new URLSearchParams(searchString);
+      const pageNum = urlParams.get("page");
+      if (pageNum) {
+        const targetPage = pages.find(p => p.pageNumber === parseInt(pageNum, 10));
+        if (targetPage) {
+          setSelectedPage(targetPage);
+          setDetailOpen(true);
+        }
+      }
+    }
+  }, [pages, searchString]);
 
   const handlePageClick = (page: Page) => {
     setSelectedPage(page);

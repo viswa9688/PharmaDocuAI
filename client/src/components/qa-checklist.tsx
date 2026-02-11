@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -26,11 +26,21 @@ import {
   Eye,
   ChevronDown,
   Loader2,
-  MessageSquare
+  User
 } from "lucide-react";
-import type { QAChecklist, QACheckItem, ValidationAlert } from "@shared/schema";
+import type { QAChecklist, QACheckItem, ValidationAlert, AlertReview } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { format } from "date-fns";
+
+interface AlertReviewWithUser extends AlertReview {
+  reviewer: {
+    id: string;
+    firstName: string | null;
+    lastName: string | null;
+    email: string | null;
+  } | null;
+}
 
 interface QAChecklistProps {
   documentId: string;
@@ -62,6 +72,8 @@ const severityColors: Record<string, string> = {
   info: "text-muted-foreground bg-muted/50 border-border",
 };
 
+const approvedColors = "text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-950/50 border-green-200 dark:border-green-800";
+
 const severityBadgeVariant: Record<string, "destructive" | "default" | "secondary" | "outline"> = {
   critical: "destructive",
   high: "destructive",
@@ -83,18 +95,21 @@ function StatusIcon({ status }: { status: QACheckItem["status"] }) {
 function AlertRowExpandable({ 
   alert, 
   documentId,
-  onViewPage 
+  onViewPage,
+  approvalReview,
 }: { 
   alert: ValidationAlert; 
   documentId: string;
   onViewPage?: (pageNumber: number) => void;
+  approvalReview?: AlertReviewWithUser | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [comment, setComment] = useState("");
   const [showCommentBox, setShowCommentBox] = useState<"approved" | "disapproved" | null>(null);
   const { toast } = useToast();
 
-  const colorClass = severityColors[alert.severity] || severityColors.info;
+  const isApproved = approvalReview?.decision === "approved";
+  const colorClass = isApproved ? approvedColors : (severityColors[alert.severity] || severityColors.info);
   const badgeVariant = severityBadgeVariant[alert.severity] || "outline";
 
   const reviewMutation = useMutation({
@@ -142,6 +157,10 @@ function AlertRowExpandable({
 
   const pageNumber = alert.source?.pageNumber;
 
+  const reviewerName = approvalReview?.reviewer
+    ? `${approvalReview.reviewer.firstName || ""} ${approvalReview.reviewer.lastName || ""}`.trim() || approvalReview.reviewer.email || "Unknown"
+    : null;
+
   return (
     <div 
       className={`rounded-md border ${colorClass} overflow-visible`}
@@ -152,11 +171,24 @@ function AlertRowExpandable({
         onClick={() => setExpanded(!expanded)}
         data-testid={`qa-alert-trigger-${alert.id}`}
       >
-        <AlertTriangle className="h-4 w-4 shrink-0" />
-        <span className="text-sm font-medium flex-1">{alert.title}</span>
-        <Badge variant={badgeVariant} className="text-xs">
-          {alert.severity}
-        </Badge>
+        {isApproved ? (
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+        ) : (
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+        )}
+        <span className="text-sm font-medium flex-1">
+          {alert.title}
+          {isApproved && <span className="text-xs ml-2 opacity-70">(Approved)</span>}
+        </span>
+        {isApproved ? (
+          <Badge variant="default" className="text-xs">
+            Approved
+          </Badge>
+        ) : (
+          <Badge variant={badgeVariant} className="text-xs">
+            {alert.severity}
+          </Badge>
+        )}
         {pageNumber && (
           <Badge variant="outline" className="text-xs">
             Page {pageNumber}
@@ -176,6 +208,26 @@ function AlertRowExpandable({
             )}
           </div>
 
+          {isApproved && approvalReview && (
+            <div className="rounded-md border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/30 p-3 space-y-2">
+              <div className="flex items-center gap-2 text-xs text-green-700 dark:text-green-400">
+                <ThumbsUp className="h-3 w-3" />
+                <span className="font-medium">Approved</span>
+              </div>
+              <p className="text-xs italic opacity-80">"{approvalReview.comment}"</p>
+              <div className="flex items-center justify-between gap-2 text-xs opacity-70 flex-wrap">
+                <span className="flex items-center gap-1">
+                  <User className="h-3 w-3" />
+                  {reviewerName}
+                  {approvalReview.reviewer?.id && (
+                    <span className="opacity-60">({approvalReview.reviewer.id})</span>
+                  )}
+                </span>
+                <span>{format(new Date(approvalReview.createdAt), "MMM d, yyyy h:mm a")}</span>
+              </div>
+            </div>
+          )}
+
           {pageNumber && onViewPage && (
             <Button
               variant="outline"
@@ -191,76 +243,79 @@ function AlertRowExpandable({
             </Button>
           )}
 
-          <Separator />
-
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant={showCommentBox === "approved" ? "default" : "outline"}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowCommentBox(showCommentBox === "approved" ? null : "approved");
-                }}
-                data-testid={`button-approve-alert-${alert.id}`}
-              >
-                <ThumbsUp className="h-3 w-3 mr-1" />
-                Approve
-              </Button>
-              <Button
-                size="sm"
-                variant={showCommentBox === "disapproved" ? "destructive" : "outline"}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowCommentBox(showCommentBox === "disapproved" ? null : "disapproved");
-                }}
-                data-testid={`button-disapprove-alert-${alert.id}`}
-              >
-                <ThumbsDown className="h-3 w-3 mr-1" />
-                Disapprove
-              </Button>
-            </div>
-
-            {showCommentBox && (
+          {!isApproved && (
+            <>
+              <Separator />
               <div className="space-y-2">
-                <Textarea
-                  placeholder={`Add your comment for ${showCommentBox === "approved" ? "approval" : "disapproval"}...`}
-                  value={comment}
-                  onChange={(e) => setComment(e.target.value)}
-                  className="text-xs min-h-[60px] bg-background"
-                  onClick={(e) => e.stopPropagation()}
-                  data-testid={`textarea-review-comment-${alert.id}`}
-                />
                 <div className="flex items-center gap-2">
                   <Button
                     size="sm"
-                    variant={showCommentBox === "approved" ? "default" : "destructive"}
+                    variant={showCommentBox === "approved" ? "default" : "outline"}
                     onClick={(e) => {
                       e.stopPropagation();
-                      handleSubmitReview(showCommentBox);
+                      setShowCommentBox(showCommentBox === "approved" ? null : "approved");
                     }}
-                    disabled={reviewMutation.isPending}
-                    data-testid={`button-submit-review-${alert.id}`}
+                    data-testid={`button-approve-alert-${alert.id}`}
                   >
-                    {reviewMutation.isPending && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                    Submit {showCommentBox === "approved" ? "Approval" : "Disapproval"}
+                    <ThumbsUp className="h-3 w-3 mr-1" />
+                    Approve
                   </Button>
                   <Button
                     size="sm"
-                    variant="ghost"
+                    variant={showCommentBox === "disapproved" ? "destructive" : "outline"}
                     onClick={(e) => {
                       e.stopPropagation();
-                      setShowCommentBox(null);
-                      setComment("");
+                      setShowCommentBox(showCommentBox === "disapproved" ? null : "disapproved");
                     }}
-                    data-testid={`button-cancel-review-${alert.id}`}
+                    data-testid={`button-disapprove-alert-${alert.id}`}
                   >
-                    Cancel
+                    <ThumbsDown className="h-3 w-3 mr-1" />
+                    Disapprove
                   </Button>
                 </div>
+
+                {showCommentBox && (
+                  <div className="space-y-2">
+                    <Textarea
+                      placeholder={`Add your comment for ${showCommentBox === "approved" ? "approval" : "disapproval"}...`}
+                      value={comment}
+                      onChange={(e) => setComment(e.target.value)}
+                      className="text-xs min-h-[60px] bg-background"
+                      onClick={(e) => e.stopPropagation()}
+                      data-testid={`textarea-review-comment-${alert.id}`}
+                    />
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant={showCommentBox === "approved" ? "default" : "destructive"}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSubmitReview(showCommentBox);
+                        }}
+                        disabled={reviewMutation.isPending}
+                        data-testid={`button-submit-review-${alert.id}`}
+                      >
+                        {reviewMutation.isPending && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                        Submit {showCommentBox === "approved" ? "Approval" : "Disapproval"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowCommentBox(null);
+                          setComment("");
+                        }}
+                        data-testid={`button-cancel-review-${alert.id}`}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -271,6 +326,55 @@ export function QAChecklistCard({ documentId, onCategoryClick, onViewPage }: QAC
   const { data: checklist, isLoading } = useQuery<QAChecklist>({
     queryKey: ["/api/documents", documentId, "qa-checklist"],
   });
+
+  const { data: reviews = [] } = useQuery<AlertReviewWithUser[]>({
+    queryKey: ["/api/documents", documentId, "alert-reviews"],
+  });
+
+  const reviewsByAlertId = useMemo(() => {
+    const map = new Map<string, AlertReviewWithUser>();
+    const sorted = [...reviews].sort((a, b) => 
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+    for (const review of sorted) {
+      if (!map.has(review.alertId)) {
+        map.set(review.alertId, review);
+      }
+    }
+    return map;
+  }, [reviews]);
+
+  const adjustedCounts = useMemo(() => {
+    if (!checklist) return null;
+
+    let approvedAlertCount = 0;
+    let checkpointsFlipped = 0;
+
+    for (const item of checklist.items) {
+      if (item.status === "fail" && item.relatedAlerts && item.relatedAlerts.length > 0) {
+        const allApproved = item.relatedAlerts.every(alert => {
+          const review = reviewsByAlertId.get(alert.id);
+          return review?.decision === "approved";
+        });
+        if (allApproved) {
+          checkpointsFlipped++;
+        }
+        for (const alert of item.relatedAlerts) {
+          const review = reviewsByAlertId.get(alert.id);
+          if (review?.decision === "approved") {
+            approvedAlertCount++;
+          }
+        }
+      }
+    }
+
+    return {
+      passedChecks: checklist.passedChecks + checkpointsFlipped,
+      failedChecks: checklist.failedChecks - checkpointsFlipped,
+      naChecks: checklist.naChecks,
+      totalChecks: checklist.totalChecks,
+    };
+  }, [checklist, reviewsByAlertId]);
 
   if (isLoading) {
     return (
@@ -290,15 +394,15 @@ export function QAChecklistCard({ documentId, onCategoryClick, onViewPage }: QAC
     );
   }
 
-  if (!checklist) {
+  if (!checklist || !adjustedCounts) {
     return null;
   }
 
-  const passRate = checklist.totalChecks > 0 
-    ? Math.round((checklist.passedChecks / checklist.totalChecks) * 100) 
+  const passRate = adjustedCounts.totalChecks > 0 
+    ? Math.round((adjustedCounts.passedChecks / adjustedCounts.totalChecks) * 100) 
     : 0;
 
-  const overallStatus = checklist.failedChecks === 0 ? "compliant" : "review_required";
+  const overallStatus = adjustedCounts.failedChecks === 0 ? "compliant" : "review_required";
 
   return (
     <Card data-testid="card-qa-checklist">
@@ -316,7 +420,7 @@ export function QAChecklistCard({ documentId, onCategoryClick, onViewPage }: QAC
               {overallStatus === "compliant" ? "Compliant" : "Review Required"}
             </Badge>
             <span className="text-sm text-muted-foreground" data-testid="text-qa-score">
-              {checklist.passedChecks}/{checklist.totalChecks} passed ({passRate}%)
+              {adjustedCounts.passedChecks}/{adjustedCounts.totalChecks} passed ({passRate}%)
             </span>
           </div>
         </div>
@@ -324,15 +428,15 @@ export function QAChecklistCard({ documentId, onCategoryClick, onViewPage }: QAC
       <CardContent>
         <div className="grid grid-cols-3 gap-3 mb-4">
           <div className="text-center p-3 bg-green-50 dark:bg-green-950 rounded-md" data-testid="stat-qa-passed">
-            <div className="text-xl font-bold text-green-600 dark:text-green-400">{checklist.passedChecks}</div>
+            <div className="text-xl font-bold text-green-600 dark:text-green-400">{adjustedCounts.passedChecks}</div>
             <div className="text-xs text-muted-foreground">Passed</div>
           </div>
           <div className="text-center p-3 bg-red-50 dark:bg-red-950 rounded-md" data-testid="stat-qa-failed">
-            <div className="text-xl font-bold text-destructive">{checklist.failedChecks}</div>
+            <div className="text-xl font-bold text-destructive">{adjustedCounts.failedChecks}</div>
             <div className="text-xs text-muted-foreground">Failed</div>
           </div>
           <div className="text-center p-3 bg-muted rounded-md" data-testid="stat-qa-na">
-            <div className="text-xl font-bold text-muted-foreground">{checklist.naChecks}</div>
+            <div className="text-xl font-bold text-muted-foreground">{adjustedCounts.naChecks}</div>
             <div className="text-xs text-muted-foreground">N/A</div>
           </div>
         </div>
@@ -346,6 +450,7 @@ export function QAChecklistCard({ documentId, onCategoryClick, onViewPage }: QAC
               item={item} 
               documentId={documentId}
               onViewPage={onViewPage}
+              reviewsByAlertId={reviewsByAlertId}
             />
           ))}
         </Accordion>
@@ -357,14 +462,30 @@ export function QAChecklistCard({ documentId, onCategoryClick, onViewPage }: QAC
 function QACheckAccordionItem({ 
   item, 
   documentId,
-  onViewPage 
+  onViewPage,
+  reviewsByAlertId,
 }: { 
   item: QACheckItem; 
   documentId: string;
   onViewPage?: (pageNumber: number) => void;
+  reviewsByAlertId: Map<string, AlertReviewWithUser>;
 }) {
   const CategoryIcon = categoryIcons[item.category] || AlertTriangle;
   const hasAlerts = item.status === "fail" && item.relatedAlerts && item.relatedAlerts.length > 0;
+
+  const allAlertsApproved = hasAlerts && item.relatedAlerts!.every(alert => {
+    const review = reviewsByAlertId.get(alert.id);
+    return review?.decision === "approved";
+  });
+
+  const unapprovedCount = hasAlerts 
+    ? item.relatedAlerts!.filter(alert => {
+        const review = reviewsByAlertId.get(alert.id);
+        return !review || review.decision !== "approved";
+      }).length
+    : 0;
+
+  const effectiveStatus = allAlertsApproved ? "pass" : item.status;
 
   if (!hasAlerts) {
     return (
@@ -401,10 +522,12 @@ function QACheckAccordionItem({
   return (
     <AccordionItem value={item.id} className="border-0" data-testid={`qa-check-item-${item.id}`}>
       <AccordionTrigger className={`p-3 rounded-md hover:no-underline [&[data-state=open]]:rounded-b-none ${
-        item.status === "fail" ? "bg-red-50/50 dark:bg-red-950/30" : ""
+        allAlertsApproved 
+          ? "bg-green-50/50 dark:bg-green-950/30" 
+          : "bg-red-50/50 dark:bg-red-950/30"
       }`}>
         <div className="flex items-start gap-3 flex-1 text-left">
-          <StatusIcon status={item.status} />
+          <StatusIcon status={effectiveStatus} />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-sm font-medium" data-testid={`text-qa-check-title-${item.id}`}>
@@ -414,22 +537,30 @@ function QACheckAccordionItem({
                 <CategoryIcon className="h-3 w-3 mr-1" />
                 {categoryLabels[item.category]}
               </Badge>
-              {item.relatedAlertCount > 0 && (
-                <Badge variant="destructive" className="text-xs" data-testid={`badge-qa-alert-count-${item.id}`}>
-                  {item.relatedAlertCount} {item.relatedAlertCount === 1 ? "issue" : "issues"}
+              {allAlertsApproved ? (
+                <Badge variant="default" className="text-xs" data-testid={`badge-qa-approved-${item.id}`}>
+                  All Approved
                 </Badge>
+              ) : (
+                <>
+                  {unapprovedCount > 0 && (
+                    <Badge variant="destructive" className="text-xs" data-testid={`badge-qa-alert-count-${item.id}`}>
+                      {unapprovedCount} {unapprovedCount === 1 ? "issue" : "issues"} remaining
+                    </Badge>
+                  )}
+                </>
               )}
             </div>
             <p className="text-xs text-muted-foreground mt-1">{item.description}</p>
             {item.details && (
-              <p className="text-xs mt-1 text-destructive" data-testid={`text-qa-check-details-${item.id}`}>
-                {item.details}
+              <p className={`text-xs mt-1 ${allAlertsApproved ? "text-green-600 dark:text-green-400" : "text-destructive"}`} data-testid={`text-qa-check-details-${item.id}`}>
+                {allAlertsApproved ? "All issues reviewed and approved" : item.details}
               </p>
             )}
           </div>
         </div>
       </AccordionTrigger>
-      <AccordionContent className="bg-red-50/30 dark:bg-red-950/20 rounded-b-md px-3 pb-3 pt-0">
+      <AccordionContent className={`${allAlertsApproved ? "bg-green-50/30 dark:bg-green-950/20" : "bg-red-50/30 dark:bg-red-950/20"} rounded-b-md px-3 pb-3 pt-0`}>
         <div className="space-y-2 pl-8">
           {item.relatedAlerts!.map((alert) => (
             <AlertRowExpandable 
@@ -437,6 +568,7 @@ function QACheckAccordionItem({
               alert={alert} 
               documentId={documentId}
               onViewPage={onViewPage}
+              approvalReview={reviewsByAlertId.get(alert.id) || null}
             />
           ))}
         </div>
