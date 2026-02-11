@@ -33,6 +33,9 @@ The backend uses Express with Drizzle ORM. PostgreSQL serves as the primary data
 - **Issue Resolution**: Tracks and resolves validation issues with an approve/reject workflow, including comments and resolution timestamps.
 - **User Management**: Integrates with Replit Auth (OIDC) for user authentication and stores user profiles in a `users` table. Includes role-based access control (RBAC) with four roles: admin, reviewer, operator, and viewer. The first user to sign in automatically becomes admin. Admin users can manage roles via the User Management page. Protected routes enforce role requirements both client-side (RouteGuard component) and server-side (isAuthenticated middleware + role checks). Login/logout buttons and user profile display are shown in the sidebar footer.
 
+### Test Mode (TEMPORARY — to be removed)
+When uploading a document with Product Name set to "1", the system bypasses all processing and generates a fully passing result: all 12 QA checklist items pass, zero alerts, zero quality issues, zero validation errors. Any other Product Name triggers normal processing.
+
 ## External Dependencies
 - **Google Cloud Platform**:
     - **Google Document AI**: For advanced document parsing and data extraction.

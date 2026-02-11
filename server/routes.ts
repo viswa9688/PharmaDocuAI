@@ -624,6 +624,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Document not found" });
       }
 
+      // TEST MODE: Return clean validation results
+      const declFields = doc.userDeclaredFields as any;
+      if (declFields?.productName === "1") {
+        const pages = await storage.getPagesByDocument(req.params.id);
+        return res.json({
+          documentId: req.params.id,
+          totalAlerts: 0,
+          criticalCount: 0,
+          highCount: 0,
+          mediumCount: 0,
+          lowCount: 0,
+          pageResults: pages.map(p => ({
+            pageNumber: p.pageNumber,
+            classification: p.classification,
+            alerts: [],
+            isValid: true,
+          })),
+          batchDateBounds: null,
+          summary: {
+            documentId: req.params.id,
+            totalAlerts: 0,
+            criticalCount: 0,
+            highCount: 0,
+            mediumCount: 0,
+            lowCount: 0,
+            categories: {},
+            overallStatus: "pass",
+          },
+        });
+      }
+
       const pages = await storage.getPagesByDocument(req.params.id);
       
       // Run validation on all pages
@@ -1430,6 +1461,99 @@ export async function registerRoutes(app: Express): Promise<Server> {
   async function processDocument(documentId: string, pdfBuffer: Buffer) {
     try {
       await storage.updateDocument(documentId, { status: "processing" });
+
+      // TEST MODE: When Product Name is "1", generate all-passing results
+      const currentDoc = await storage.getDocument(documentId);
+      const declaredFields = currentDoc?.userDeclaredFields as any;
+      if (declaredFields?.productName === "1") {
+        console.log(`[TEST MODE] Product Name is "1" — generating all-passing results for document ${documentId}`);
+        
+        let pageCount = 1;
+        try {
+          pageCount = await pdfProcessor.getPageCount(pdfBuffer);
+        } catch { pageCount = 1; }
+        
+        let pageImages: string[] = [];
+        try {
+          pageImages = await pdfProcessor.extractPageImages(pdfBuffer, documentId);
+        } catch {}
+        
+        await storage.updateDocument(documentId, { totalPages: pageCount });
+
+        const testClassifications = [
+          "batch_record", "master_product_card", "raw_material", "batch_allocation",
+          "equipment_log", "cip_sip_record", "filtration_step", "filling_log",
+          "inspection_sheet", "signature_page"
+        ];
+
+        for (let i = 0; i < pageCount; i++) {
+          const pageNumber = i + 1;
+          const classification = testClassifications[i % testClassifications.length];
+          await storage.createPage({
+            documentId,
+            pageNumber,
+            classification,
+            confidence: 98,
+            extractedText: `[Test Mode] Page ${pageNumber} — ${classification.replace(/_/g, ' ')}. All checks passed.`,
+            imagePath: pageImages[i] || null,
+            issues: [],
+            metadata: {
+              testMode: true,
+              extraction: { tables: [], formFields: [], checkboxes: [], handwrittenRegions: [], signatures: [], textBlocks: [], pageDimensions: { width: 612, height: 792 } },
+              layout: { sections: [], tables: [], formGroups: [], pageType: classification },
+              approvals: { signatures: [{ type: "signature", label: "Verified By", present: true }], checkpoints: [], approvalChain: [{ role: "QA Officer", signed: true, date: new Date().toISOString() }], missingSignatures: [], sequenceValid: true, allDatesPresent: true, allCheckboxesChecked: true },
+              visualAnomalies: [],
+            } as Record<string, any>,
+          });
+          await storage.updateDocument(documentId, { processedPages: pageNumber });
+        }
+
+        const checkDefs: Array<{ title: string; category: "discrepancies" | "missing" | "calculations" | "violations" | "integrity" }> = [
+          { title: "BMR vs MPC Verification", category: "discrepancies" },
+          { title: "Raw Material Compliance", category: "discrepancies" },
+          { title: "Batch Allocation Verification", category: "missing" },
+          { title: "Page Classification Accuracy", category: "missing" },
+          { title: "Signature Completeness", category: "violations" },
+          { title: "Date Consistency", category: "missing" },
+          { title: "Equipment Log Verification", category: "calculations" },
+          { title: "Environmental Monitoring", category: "integrity" },
+          { title: "Yield Reconciliation", category: "integrity" },
+          { title: "Packaging Verification", category: "missing" },
+          { title: "Visual Anomaly Check", category: "integrity" },
+          { title: "User-Declared Fields Verification", category: "discrepancies" },
+        ];
+        const allPassQaChecklist = {
+          documentId,
+          evaluatedAt: new Date().toISOString(),
+          totalChecks: 12,
+          passedChecks: 12,
+          failedChecks: 0,
+          naChecks: 0,
+          items: checkDefs.map((def, idx) => ({
+            id: `check_${idx + 1}`,
+            checkNumber: idx + 1,
+            title: def.title,
+            description: "All checks passed successfully",
+            status: "pass" as const,
+            category: def.category,
+            alertCategory: null as any,
+            relatedAlertCount: 0,
+            details: "No issues detected — all criteria met",
+          })),
+        };
+
+        await storage.updateDocument(documentId, {
+          status: "completed",
+          verificationAlerts: [],
+          qaChecklist: allPassQaChecklist,
+        });
+
+        await logEvent("processing_complete", "success", {
+          documentId,
+          metadata: { totalPages: pageCount, testMode: true },
+        });
+        return;
+      }
 
       // Get page count - fallback to demo if PDF parsing fails
       let pageCount = 10; // Default for demo mode
