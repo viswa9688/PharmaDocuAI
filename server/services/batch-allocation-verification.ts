@@ -92,14 +92,16 @@ export class BatchAllocationVerificationService {
   }
 
   private extractManufacturingDate(text: string): string | null {
+    const monthNameDate = '\\d{1,2}[-\\/\\s](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-\\/\\s]\\d{2,4}';
+    const numericDate = '\\d{1,2}[-\\/]\\d{1,2}[-\\/]\\d{2,4}';
+    const isoDate = '\\d{4}[-\\/]\\d{2}[-\\/]\\d{2}';
+    const anyDate = `(?:${monthNameDate}|${isoDate}|${numericDate})`;
+
     const patterns = [
-      /Manufacturing\s*Date\s+(\d{4}[-\/]\d{2}[-\/]\d{2})/i,
-      /Manufacturing\s*Date[:\s]+(\d{4}[-\/]\d{2}[-\/]\d{2})/i,
-      /Mfg\.?\s*Date[:\s]*(\d{4}[-\/]\d{2}[-\/]\d{2})/i,
-      /Mfg\.?\s*Date[:\s]*(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i,
-      /Manufacturing\s*Date[:\s]*(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i,
-      /Date\s*of\s*Manufacture[:\s]*(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i,
-      /(\d{4}[-\/]\d{2}[-\/]\d{2}).*?(?:Mfg|Manufacturing)/i,
+      new RegExp(`Mfg\\.?\\s*Date[:\\s]*(${anyDate})`, 'i'),
+      new RegExp(`Manufacturing\\s*Date[:\\s]*(${anyDate})`, 'i'),
+      new RegExp(`Date\\s*of\\s*Manufacture[:\\s]*(${anyDate})`, 'i'),
+      new RegExp(`(${anyDate}).*?(?:Mfg|Manufacturing)`, 'i'),
     ];
     
     for (const pattern of patterns) {
@@ -110,14 +112,16 @@ export class BatchAllocationVerificationService {
   }
 
   private extractExpiryDate(text: string): string | null {
+    const monthNameDate = '\\d{1,2}[-\\/\\s](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-\\/\\s]\\d{2,4}';
+    const numericDate = '\\d{1,2}[-\\/]\\d{1,2}[-\\/]\\d{2,4}';
+    const isoDate = '\\d{4}[-\\/]\\d{2}[-\\/]\\d{2}';
+    const anyDate = `(?:${monthNameDate}|${isoDate}|${numericDate})`;
+
     const patterns = [
-      /Expiry\s*Date\s+(\d{4}[-\/]\d{2}[-\/]\d{2})/i,
-      /Expiry\s*Date[:\s]+(\d{4}[-\/]\d{2}[-\/]\d{2})/i,
-      /Exp\.?\s*Date[:\s]*(\d{4}[-\/]\d{2}[-\/]\d{2})/i,
-      /Exp\.?\s*Date[:\s]*(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i,
-      /Expiry\s*Date[:\s]*(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i,
-      /Date\s*of\s*Expiry[:\s]*(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i,
-      /(\d{4}[-\/]\d{2}[-\/]\d{2}).*?(?:Exp|Expiry)/i,
+      new RegExp(`Exp\\.?\\s*Date[:\\s]*(${anyDate})`, 'i'),
+      new RegExp(`Expiry\\s*Date[:\\s]*(${anyDate})`, 'i'),
+      new RegExp(`Date\\s*of\\s*Expiry[:\\s]*(${anyDate})`, 'i'),
+      new RegExp(`(${anyDate}).*?(?:Exp|Expiry)`, 'i'),
     ];
     
     for (const pattern of patterns) {
@@ -245,6 +249,25 @@ export class BatchAllocationVerificationService {
   }
 
   private parseDate(dateStr: string): Date | null {
+    const monthNames: Record<string, number> = {
+      jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+      jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+      january: 0, february: 1, march: 2, april: 3, june: 5,
+      july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+    };
+
+    const namedMonthMatch = dateStr.match(/(\d{1,2})[-\/\s]((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*)\.?[-\/\s](\d{2,4})/i);
+    if (namedMonthMatch) {
+      const day = parseInt(namedMonthMatch[1]);
+      const monthKey = namedMonthMatch[2].toLowerCase();
+      const monthIdx = monthNames[monthKey];
+      let year = parseInt(namedMonthMatch[3]);
+      if (year < 100) year += 2000;
+      if (monthIdx !== undefined) {
+        return new Date(year, monthIdx, day);
+      }
+    }
+
     const formats = [
       /(\d{4})[-\/](\d{2})[-\/](\d{2})/,
       /(\d{2})[-\/](\d{2})[-\/](\d{4})/,
