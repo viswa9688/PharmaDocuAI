@@ -1,7 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Accordion,
   AccordionContent,
@@ -17,13 +20,22 @@ import {
   Calculator,
   FileWarning,
   PenLine,
-  Clock
+  Clock,
+  ThumbsUp,
+  ThumbsDown,
+  Eye,
+  ChevronDown,
+  Loader2,
+  MessageSquare
 } from "lucide-react";
 import type { QAChecklist, QACheckItem, ValidationAlert } from "@shared/schema";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 interface QAChecklistProps {
   documentId: string;
   onCategoryClick?: (category: string, alertCategory: string | null) => void;
+  onViewPage?: (pageNumber: number) => void;
 }
 
 const categoryIcons: Record<string, typeof Calculator> = {
@@ -68,42 +80,194 @@ function StatusIcon({ status }: { status: QACheckItem["status"] }) {
   return <MinusCircle className="h-5 w-5 text-muted-foreground shrink-0" />;
 }
 
-function AlertRow({ alert }: { alert: ValidationAlert }) {
+function AlertRowExpandable({ 
+  alert, 
+  documentId,
+  onViewPage 
+}: { 
+  alert: ValidationAlert; 
+  documentId: string;
+  onViewPage?: (pageNumber: number) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [comment, setComment] = useState("");
+  const [showCommentBox, setShowCommentBox] = useState<"approved" | "disapproved" | null>(null);
+  const { toast } = useToast();
+
   const colorClass = severityColors[alert.severity] || severityColors.info;
   const badgeVariant = severityBadgeVariant[alert.severity] || "outline";
 
+  const reviewMutation = useMutation({
+    mutationFn: async ({ decision, comment }: { decision: string; comment: string }) => {
+      const res = await apiRequest("POST", `/api/documents/${documentId}/alert-reviews`, {
+        alertId: alert.id,
+        decision,
+        comment,
+        alertTitle: alert.title,
+        alertSeverity: alert.severity,
+        alertCategory: alert.category,
+        pageNumber: alert.source?.pageNumber || null,
+      });
+      return res.json();
+    },
+    onSuccess: (_data, variables) => {
+      toast({
+        title: variables.decision === "approved" ? "Alert Approved" : "Alert Disapproved",
+        description: `Review recorded for "${alert.title}"`,
+      });
+      setComment("");
+      setShowCommentBox(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/documents", documentId, "alert-reviews"] });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to submit review. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSubmitReview = (decision: "approved" | "disapproved") => {
+    if (!comment.trim()) {
+      toast({
+        title: "Comment Required",
+        description: "Please provide a comment for your review decision.",
+        variant: "destructive",
+      });
+      return;
+    }
+    reviewMutation.mutate({ decision, comment: comment.trim() });
+  };
+
+  const pageNumber = alert.source?.pageNumber;
+
   return (
     <div 
-      className={`p-3 rounded-md border ${colorClass}`}
+      className={`rounded-md border ${colorClass} overflow-visible`}
       data-testid={`qa-alert-${alert.id}`}
     >
-      <div className="flex items-start gap-2">
-        <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-medium">{alert.title}</span>
-            <Badge variant={badgeVariant} className="text-xs">
-              {alert.severity}
-            </Badge>
-            {alert.isResolved && (
-              <Badge variant="outline" className="text-xs text-green-600 dark:text-green-400">
-                Resolved
-              </Badge>
+      <div 
+        className="flex items-center gap-2 p-3 cursor-pointer"
+        onClick={() => setExpanded(!expanded)}
+        data-testid={`qa-alert-trigger-${alert.id}`}
+      >
+        <AlertTriangle className="h-4 w-4 shrink-0" />
+        <span className="text-sm font-medium flex-1">{alert.title}</span>
+        <Badge variant={badgeVariant} className="text-xs">
+          {alert.severity}
+        </Badge>
+        {pageNumber && (
+          <Badge variant="outline" className="text-xs">
+            Page {pageNumber}
+          </Badge>
+        )}
+        <ChevronDown className={`h-4 w-4 shrink-0 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`} />
+      </div>
+
+      {expanded && (
+        <div className="px-3 pb-3 space-y-3 border-t border-inherit">
+          <div className="pt-3">
+            <p className="text-xs opacity-80">{alert.message}</p>
+            {alert.suggestedAction && (
+              <p className="text-xs mt-1 italic opacity-70">
+                Suggested: {alert.suggestedAction}
+              </p>
             )}
           </div>
-          <p className="text-xs mt-1 opacity-80">{alert.message}</p>
-          {alert.suggestedAction && (
-            <p className="text-xs mt-1 italic opacity-70">
-              Suggested: {alert.suggestedAction}
-            </p>
+
+          {pageNumber && onViewPage && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onViewPage(pageNumber);
+              }}
+              data-testid={`button-view-page-${alert.id}`}
+            >
+              <Eye className="h-3 w-3 mr-1" />
+              View Page {pageNumber}
+            </Button>
           )}
+
+          <Separator />
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant={showCommentBox === "approved" ? "default" : "outline"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowCommentBox(showCommentBox === "approved" ? null : "approved");
+                }}
+                data-testid={`button-approve-alert-${alert.id}`}
+              >
+                <ThumbsUp className="h-3 w-3 mr-1" />
+                Approve
+              </Button>
+              <Button
+                size="sm"
+                variant={showCommentBox === "disapproved" ? "destructive" : "outline"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowCommentBox(showCommentBox === "disapproved" ? null : "disapproved");
+                }}
+                data-testid={`button-disapprove-alert-${alert.id}`}
+              >
+                <ThumbsDown className="h-3 w-3 mr-1" />
+                Disapprove
+              </Button>
+            </div>
+
+            {showCommentBox && (
+              <div className="space-y-2">
+                <Textarea
+                  placeholder={`Add your comment for ${showCommentBox === "approved" ? "approval" : "disapproval"}...`}
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  className="text-xs min-h-[60px] bg-background"
+                  onClick={(e) => e.stopPropagation()}
+                  data-testid={`textarea-review-comment-${alert.id}`}
+                />
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant={showCommentBox === "approved" ? "default" : "destructive"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSubmitReview(showCommentBox);
+                    }}
+                    disabled={reviewMutation.isPending}
+                    data-testid={`button-submit-review-${alert.id}`}
+                  >
+                    {reviewMutation.isPending && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                    Submit {showCommentBox === "approved" ? "Approval" : "Disapproval"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowCommentBox(null);
+                      setComment("");
+                    }}
+                    data-testid={`button-cancel-review-${alert.id}`}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
 
-export function QAChecklistCard({ documentId, onCategoryClick }: QAChecklistProps) {
+export function QAChecklistCard({ documentId, onCategoryClick, onViewPage }: QAChecklistProps) {
   const { data: checklist, isLoading } = useQuery<QAChecklist>({
     queryKey: ["/api/documents", documentId, "qa-checklist"],
   });
@@ -177,7 +341,12 @@ export function QAChecklistCard({ documentId, onCategoryClick }: QAChecklistProp
 
         <Accordion type="multiple" className="space-y-1">
           {checklist.items.map((item) => (
-            <QACheckAccordionItem key={item.id} item={item} />
+            <QACheckAccordionItem 
+              key={item.id} 
+              item={item} 
+              documentId={documentId}
+              onViewPage={onViewPage}
+            />
           ))}
         </Accordion>
       </CardContent>
@@ -185,7 +354,15 @@ export function QAChecklistCard({ documentId, onCategoryClick }: QAChecklistProp
   );
 }
 
-function QACheckAccordionItem({ item }: { item: QACheckItem }) {
+function QACheckAccordionItem({ 
+  item, 
+  documentId,
+  onViewPage 
+}: { 
+  item: QACheckItem; 
+  documentId: string;
+  onViewPage?: (pageNumber: number) => void;
+}) {
   const CategoryIcon = categoryIcons[item.category] || AlertTriangle;
   const hasAlerts = item.status === "fail" && item.relatedAlerts && item.relatedAlerts.length > 0;
 
@@ -255,7 +432,12 @@ function QACheckAccordionItem({ item }: { item: QACheckItem }) {
       <AccordionContent className="bg-red-50/30 dark:bg-red-950/20 rounded-b-md px-3 pb-3 pt-0">
         <div className="space-y-2 pl-8">
           {item.relatedAlerts!.map((alert) => (
-            <AlertRow key={alert.id} alert={alert} />
+            <AlertRowExpandable 
+              key={alert.id} 
+              alert={alert} 
+              documentId={documentId}
+              onViewPage={onViewPage}
+            />
           ))}
         </div>
       </AccordionContent>

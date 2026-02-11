@@ -118,6 +118,12 @@ export default function DocumentViewer() {
         <QAChecklistCard
           documentId={documentId}
           onCategoryClick={handleQACategoryClick}
+          onViewPage={(pageNumber) => {
+            const page = pages.find(p => p.pageNumber === pageNumber);
+            if (page) {
+              handlePageClick(page);
+            }
+          }}
         />
       )}
 
